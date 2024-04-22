@@ -17,19 +17,43 @@ class StatsMaximePlugin: public BakkesMod::Plugin::BakkesModPlugin
 	//Boilerplate
 	void onLoad() override;
 	void onUnload() override;
+
+	
 	
 	// setup
 	bool initAPI();
 
+	//activate Trigger
+	void gameHasEnded();
+	void gameHasBegun();
+
 	// Trigger
-	void onMatchEnded(std::string eventName);
+	void gameStart(std::string eventName);
+	void gameEnd(std::string eventName);
+	void gameDestroyed(std::string eventName);
+
+	
+	
 
 	// Usefull fonctions
-	bool getDataAndSendIt();
-	int getMmrData(UniqueIDWrapper playerID, int gamemode);
+	
+	int getMmrData(int gamemode);
 	int getCurentPlaylist();
 	bool isRankedGame();
-	bool sendDataToAPI(UniqueIDWrapper playerID, long long timestamp, int mmr, int gameModeId);
+	bool sendMmrUpdate(long long timestamp);
+	bool sendHistoriqueGame(long long timestamp);
+
+	//vars
+	int my_team_num = -1;
+	std::string playerId = "";
+	std::string playerName = "";
+	UniqueIDWrapper playerIdWrapper;
+	int mmr_avant_match = 0;
+	int mmr_apres_match = 0;
+	int mmr_gagne = 0;
+	int playlistId = 100;
+	bool victory = false;
+	bool rage_quit = false;
 
 public:
 	void RenderSettings() override; // Uncomment if you wanna render your own tab in the settings menu

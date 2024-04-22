@@ -175,6 +175,7 @@
     </ClCompile>
     <ClCompile Include="StatsMaximePlugin.cpp" />
     <ClCompile Include="GuiBase.cpp" />
+    <ClCompile Include="StatsMaximeSettings.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="calc.h" />

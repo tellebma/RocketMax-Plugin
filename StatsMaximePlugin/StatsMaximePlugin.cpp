@@ -5,13 +5,17 @@
 #include "calc.h"
 #include <iostream>
 #include <map>
-
+#include <chrono>
+#include <thread>
 
 #define HOOK_MATCH_ENDED "Function TAGame.GameEvent_Soccar_TA.EventMatchEnded"
-#define API_ENDPOINT "http://localhost:5000"
+//#define API_ENDPOINT "http://localhost:5000"
+#define API_ENDPOINT "http://historl.tellebma.fr/"
+
 httplib::Client client(API_ENDPOINT);
 
-
+using namespace std::this_thread; // sleep_for, sleep_until
+using namespace std::chrono; // nanoseconds, system_clock, seconds
 
 BAKKESMOD_PLUGIN(StatsMaximePlugin, "StatMaxime", plugin_version, PERMISSION_ALL)
 
@@ -122,11 +126,11 @@ std::map<int, std::string> gameModes = {
 void StatsMaximePlugin::onLoad()
 {
 	_globalCvarManager = cvarManager;
-    std::string uniquePlayerId = std::to_string(gameWrapper->GetUniqueID().GetUID());
-    bool erreur = InitAPI();
+    bool erreur = initAPI();
     if (!erreur) {
-        gameWrapper->HookEvent(HOOK_MATCH_ENDED, std::bind(&StatsMaximePlugin::OnMatchEnded, this, std::placeholders::_1));
+        gameWrapper->HookEvent(HOOK_MATCH_ENDED, std::bind(&StatsMaximePlugin::onMatchEnded, this, std::placeholders::_1));
         LOG("[StatsMaximePlugin] Plugin loaded!");
+        //onMatchEnded("test");
         return;
     }
     LOG("[StatsMaximePlugin] ERREUR LORS DU CHARGEMENT DU PLUGIN (SERVEUR HS?!)");
@@ -141,21 +145,21 @@ void StatsMaximePlugin::onUnload()
     gameWrapper->UnhookEventPost(HOOK_MATCH_ENDED);
 	LOG("[StatsMaximePlugin] Plugin unloaded");
 }
-float StatsMaximePlugin::GetMmrData(int gamemode) 
+int StatsMaximePlugin::getMmrData(UniqueIDWrapper playerId,int gamemode)
 {
     LOG("[StatsMaximePlugin] [GetMmrData] GMode -" + std::to_string(gamemode));
     MMRWrapper mmrw = gameWrapper->GetMMRWrapper();
-    float mmr = mmrw.GetPlayerMMR(uniquePlayerId, gamemode);
+    int mmr = (int)mmrw.GetPlayerMMR(playerId, gamemode);
     LOG("[StatsMaximePlugin] [GetMmrData] base  - " + std::to_string(mmr));
-    SkillRating mmr2 = mmrw.GetPlayerSkillRating(uniquePlayerId, gamemode);
-    LOG("[StatsMaximePlugin] [GetMmrData] Mu    - " + std::to_string(mmr2.Mu));
-    LOG("[StatsMaximePlugin] [GetMmrData] Sigma - " + std::to_string(mmr2.Sigma));
-    SkillRank mmr3 = mmrw.GetPlayerRank(uniquePlayerId, gamemode);
-    LOG("[StatsMaximePlugin] [GetMmrData] Tier  - " + std::to_string(mmr3.Tier));
-    LOG("[StatsMaximePlugin] [GetMmrData] Div   - " + std::to_string(mmr3.Division));
-    LOG("[StatsMaximePlugin] [GetMmrData] Mplay - " + std::to_string(mmr3.MatchesPlayed));
-    bool mmr4 = mmrw.IsRanked(gamemode);
-    LOG("[StatsMaximePlugin] [GetMmrData] rank? - " + std::to_string(mmr4));
+    //SkillRating mmr2 = mmrw.GetPlayerSkillRating(playerId, gamemode);
+    //LOG("[StatsMaximePlugin] [GetMmrData] Mu    - " + std::to_string(mmr2.Mu));
+    //LOG("[StatsMaximePlugin] [GetMmrData] Sigma - " + std::to_string(mmr2.Sigma));
+    //SkillRank mmr3 = mmrw.GetPlayerRank(playerId, gamemode);
+    //LOG("[StatsMaximePlugin] [GetMmrData] Tier  - " + std::to_string(mmr3.Tier));
+    //LOG("[StatsMaximePlugin] [GetMmrData] Div   - " + std::to_string(mmr3.Division));
+    //LOG("[StatsMaximePlugin] [GetMmrData] Mplay - " + std::to_string(mmr3.MatchesPlayed));
+    //bool mmr4 = mmrw.IsRanked(gamemode);
+    //LOG("[StatsMaximePlugin] [GetMmrData] rank? - " + std::to_string(mmr4));
     return mmr;
 }
 
@@ -171,47 +175,49 @@ int StatsMaximePlugin::getCurentPlaylist()
 }
 
 
-void StatsMaximePlugin::OnMatchEnded(std::string eventName)
+void StatsMaximePlugin::onMatchEnded(std::string eventName)
 {
-    if (!IsRankedGame())
+    if (!isRankedGame())
         return;
-
+    
     LOG("[StatsMaximePlugin] [OnMatchEnded] Triggered");
     LOG("[StatsMaximePlugin] [OnMatchEnded] eventName " + eventName);
-    
-    int playlistID = getCurentPlaylist();
-    if (playlistID == 100) {
-        LOG("[StatsMaximePlugin] [OnMatchEnded] REcuperation du gamemode erreur ("+ std::to_string(playlistID)+")");
-        return;
-    }
-    float mmr = GetMmrData(playlistID);
-    
-    
-    MMRWrapper mmrw = gameWrapper->GetMMRWrapper();
-    int gamemode = mmrw.GetCurrentPlaylist();
-    GetMmrData(gamemode);
-
-    long long timestamp = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
-    
-    SendDataToAPI(timestamp, mmr, gamemode);
+    getDataAndSendIt();
+    return;
 }
 
-bool StatsMaximePlugin::IsRankedGame()
+bool StatsMaximePlugin::getDataAndSendIt() 
+{
+    int playlistID = getCurentPlaylist();
+    if (playlistID == 100) {
+        LOG("[StatsMaximePlugin] [OnMatchEnded] Recuperation du gamemode erreur (" + std::to_string(playlistID) + ")");
+        return true;
+        // playlistID = 11;
+    }
+    UniqueIDWrapper localplayerId = gameWrapper->GetUniqueID();
+    int mmr = getMmrData(localplayerId, playlistID);
+    long long timestamp = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+    bool error = sendDataToAPI(localplayerId, timestamp, mmr, playlistID);
+    // TODO gestion cas erreur
+    return error;
+}
+
+bool StatsMaximePlugin::isRankedGame()
 {
     return gameWrapper->IsInOnlineGame() && !gameWrapper->IsInReplay() && !gameWrapper->IsInFreeplay();
 }
 
-void StatsMaximePlugin::SendDataToAPI(long long timestamp, float mmr, int gameModeId)
+bool StatsMaximePlugin::sendDataToAPI(UniqueIDWrapper playerId, long long timestamp, int mmr, int gameModeId)
 {
-    std::string playerid = std::to_string(gameWrapper->GetUniqueID().GetUID()); 
+    std::string playerIdString = std::to_string(playerId.GetUID());
 
     LOG("[StatsMaximePlugin] [SendDataToAPI] -- SENDING DATA --");
-    LOG("[StatsMaximePlugin] [SendDataToAPI]  Player ID     :" + playerid);
+    LOG("[StatsMaximePlugin] [SendDataToAPI]  Player ID     :" + playerIdString);
     LOG("[StatsMaximePlugin] [SendDataToAPI]  Gamemode ID   :" + std::to_string(gameModeId)); 
     LOG("[StatsMaximePlugin] [SendDataToAPI]  Gamemode NAME :" + gameModes[gameModeId]);
     LOG("[StatsMaximePlugin] [SendDataToAPI]  MMR           :" + std::to_string(mmr));
     
-    std::string data = R"({"player_id": ")" + playerid +
+    std::string data = R"({"player_id": ")" + playerIdString +
         R"(", "timestamp": ")" + std::to_string(timestamp) +
         R"(", "elo": ")" + std::to_string(mmr) +
         R"(", "gamemode": ")" + gameModes[gameModeId] +
@@ -225,11 +231,12 @@ void StatsMaximePlugin::SendDataToAPI(long long timestamp, float mmr, int gameMo
     }
     else {
         LOG("[StatsMaximePlugin] [SendDataToAPI] ERROR DATA NOT SENT");
+        return true;
     }
-
+    return false;
 }
 
-bool StatsMaximePlugin::InitAPI()
+bool StatsMaximePlugin::initAPI()
 {
     // Obtenez l'identifiant unique du joueur sous forme de chaîne
     std::string playerId = std::to_string(gameWrapper->GetUniqueID().GetUID());

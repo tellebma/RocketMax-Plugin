@@ -11,24 +11,27 @@ constexpr auto plugin_version = stringify(VERSION_MAJOR) "." stringify(VERSION_M
 
 
 class StatsMaximePlugin: public BakkesMod::Plugin::BakkesModPlugin
-	//,public SettingsWindowBase // Uncomment if you wanna render your own tab in the settings menu
+	,public SettingsWindowBase // Uncomment if you wanna render your own tab in the settings menu
 	//,public PluginWindowBase // Uncomment if you want to render your own plugin window
 {
-
-	//std::shared_ptr<bool> enabled;
-
 	//Boilerplate
 	void onLoad() override;
 	void onUnload() override;
-	float GetMmrData(int gamemode);
+	
+	// setup
+	bool initAPI();
+
+	// Trigger
+	void onMatchEnded(std::string eventName);
+
+	// Usefull fonctions
+	bool getDataAndSendIt();
+	int getMmrData(UniqueIDWrapper playerID, int gamemode);
 	int getCurentPlaylist();
-	void OnMatchEnded(std::string eventName);
-	bool IsRankedGame();
-	void SendDataToAPI(long long timestamp, float mmr, int gameModeId);
-	bool InitAPI();
+	bool isRankedGame();
+	bool sendDataToAPI(UniqueIDWrapper playerID, long long timestamp, int mmr, int gameModeId);
 
 public:
-	//void RenderSettings() override; // Uncomment if you wanna render your own tab in the settings menu
+	void RenderSettings() override; // Uncomment if you wanna render your own tab in the settings menu
 	//void RenderWindow() override; // Uncomment if you want to render your own plugin window
-	UniqueIDWrapper uniquePlayerId;
 };

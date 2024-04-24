@@ -44,6 +44,7 @@ class StatsMaximePlugin: public BakkesMod::Plugin::BakkesModPlugin
 	bool sendHistoriqueGame(long long timestamp);
 
 	//vars
+	int game_running = 0;
 	int my_team_num = -1;
 	std::string playerId = "";
 	std::string playerName = "";
@@ -53,7 +54,6 @@ class StatsMaximePlugin: public BakkesMod::Plugin::BakkesModPlugin
 	int mmr_gagne = 0;
 	int playlistId = 100;
 	bool victory = false;
-	bool rage_quit = false;
 
 public:
 	void RenderSettings() override; // Uncomment if you wanna render your own tab in the settings menu

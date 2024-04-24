@@ -49,11 +49,14 @@ class StatsMaximePlugin: public BakkesMod::Plugin::BakkesModPlugin
 	std::string playerId = "";
 	std::string playerName = "";
 	UniqueIDWrapper playerIdWrapper;
+	bool mmr_player_updated = false;
 	int mmr_avant_match = 0;
 	int mmr_apres_match = 0;
 	int mmr_gagne = 0;
 	int playlistId = 100;
 	bool victory = false;
+
+	std::unique_ptr<MMRNotifierToken> notifierToken;
 
 public:
 	void RenderSettings() override; // Uncomment if you wanna render your own tab in the settings menu

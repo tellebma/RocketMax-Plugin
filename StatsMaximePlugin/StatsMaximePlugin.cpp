@@ -8,11 +8,11 @@
 #include <chrono>
 
 
-//#define HOOK_MATCH_ENDED "Function TAGame.GameEvent_Soccar_TA.EventMatchEnded"
-
+#define HOOK_MATCH_ENDED "Function TAGame.GameEvent_Soccar_TA.EventMatchEnded"
 #define HOOK_MATCH_START "Function GameEvent_TA.Countdown.BeginState"
-#define HOOK_MATCH_ENDED "Function TAGame.GameEvent_Soccar_TA.OnMatchWinnerSet"
-#define HOOK_GAME_DESTORYED "Function TAGame.GameEvent_TA.Destroyed"
+
+//#define HOOK_MATCH_ENDED "Function TAGame.GameEvent_Soccar_TA.OnMatchWinnerSet"
+//#define HOOK_GAME_DESTORYED "Function TAGame.GameEvent_TA.Destroyed"
 
 #define API_ENDPOINT "http://localhost:5000"
 // #define API_ENDPOINT "http://historl.tellebma.fr"
@@ -22,7 +22,7 @@ httplib::Client client(API_ENDPOINT);
 using namespace std::this_thread; // sleep_for, sleep_until
 using namespace std::chrono; // nanoseconds, system_clock, seconds
 
-BAKKESMOD_PLUGIN(StatsMaximePlugin, "StatMaxime", plugin_version, PLUGINTYPE_THREADED)
+BAKKESMOD_PLUGIN(StatsMaximePlugin, "StatMaxime", plugin_version, PLUGINTYPE_FREEPLAY)
 
 std::shared_ptr<CVarManagerWrapper> _globalCvarManager;
 enum GameMode {
@@ -57,7 +57,14 @@ void StatsMaximePlugin::onLoad()
     if (!erreur) {
         gameWrapper->HookEvent(HOOK_MATCH_START, std::bind(&StatsMaximePlugin::gameStart, this, std::placeholders::_1));
         gameWrapper->HookEvent(HOOK_MATCH_ENDED, std::bind(&StatsMaximePlugin::gameEnd, this, std::placeholders::_1));
-        LOG("[StatsMaximePlugin] Plugin loaded!");
+        notifierToken = gameWrapper->GetMMRWrapper().RegisterMMRNotifier(
+            [this](UniqueIDWrapper id) {
+                if (!game_running)return;
+                if (id != playerIdWrapper)return;
+                mmr_player_updated = true;
+            }
+        );
+        
         return;
     }
     LOG("[StatsMaximePlugin] ERREUR LORS DU CHARGEMENT DU PLUGIN (SERVEUR HS?!)");
@@ -70,6 +77,7 @@ void StatsMaximePlugin::onLoad()
 void StatsMaximePlugin::onUnload()
 {
     gameWrapper->UnhookEventPost(HOOK_MATCH_START);
+    gameWrapper->UnhookEventPost(HOOK_MATCH_ENDED);
 	LOG("[StatsMaximePlugin] Plugin unloaded");
 }
 
@@ -83,10 +91,10 @@ void StatsMaximePlugin::gameHasEnded()
     long long timestamp = std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count();
     sendMmrUpdate(timestamp);
     sendHistoriqueGame(timestamp);
-    gameHasEnded();
 
     //gameWrapper->HookEvent(HOOK_MATCH_START, std::bind(&StatsMaximePlugin::gameStart, this, std::placeholders::_1));
     game_running = 0;
+    mmr_player_updated = false;
     my_team_num = -1;
     mmr_avant_match = 0;
     mmr_apres_match = 0;
@@ -139,23 +147,27 @@ bool StatsMaximePlugin::sendMmrUpdate(long long timestamp)
     LOG("[StatsMaximePlugin] [sendMmrUpdate]  Gamemode NAME :" + gameModes[playlistId]);
     LOG("[StatsMaximePlugin] [sendMmrUpdate]  MMR           :" + std::to_string(mmr_apres_match));
 
-    
-    std::string data = R"({"player_id": ")" + playerId +
+    CurlRequest req;
+    req.url = std::string(API_ENDPOINT) + "/updateMmr";
+    req.body = R"({"player_id": ")" + playerId +
         R"(", "timestamp": ")" + std::to_string(timestamp) +
         R"(", "mmr": )" + std::to_string(mmr_apres_match) +
         R"(, "gamemode_id": )" + std::to_string(playlistId) +
         R"(})";
     
     
-    auto res = client.Post("/updateMmr", data, "application/json");
-    // Vérifier si la requête a réussi
-    if (res && res->status == 200) {
-        LOG("[StatsMaximePlugin] [sendMmrUpdate] DATA SENT");
-    }
-    else {
-        LOG("[StatsMaximePlugin] [sendMmrUpdate] ERROR DATA NOT SENT");
-        return true;
-    }
+    HttpWrapper::SendCurlJsonRequest(req, [this](int code, std::string result)
+    {
+        LOG("Json result{}", result);
+        if (code == 200) {
+            LOG("[StatsMaximePlugin] [sendMmrUpdate] DATA SENT");
+        }
+        else {
+            LOG("[StatsMaximePlugin] [sendMmrUpdate] ERROR DATA NOT SENT");
+            return true;
+        }
+       
+    });
     return false;
 }
 
@@ -167,21 +179,28 @@ bool StatsMaximePlugin::initAPI()
     // Obtenez le nom du joueur
     playerName = gameWrapper->GetPlayerName().ToString();
 
-    // Construisez la chaîne JSON avec l'identifiant du joueur
-    std::string data = R"({"player_id": ")" + playerId +
-        R"(", "player_name": ")" + playerName + R"("})";
     LOG("[StatsMaximePlugin] [InitAPI] " + playerId);
     LOG("[StatsMaximePlugin] [InitAPI] " + playerName);
-    auto res = client.Post("/initPlayer", data, "application/json");
-    // Vérifier si la requête a réussi
-    if (res && res->status == 200) {
-        LOG("[StatsMaximePlugin] [InitAPI] DATA SENT");
-    }
-    else {
-        LOG("[StatsMaximePlugin] [InitAPI] ERROR DATA NOT SENT");
-        return true;
-    }
+
+    CurlRequest req;
+    req.url = std::string(API_ENDPOINT) + "/initPlayer";
+    req.body = R"({"player_id": ")" + playerId +
+        R"(", "player_name": ")" + playerName + R"("})";
+
+
+    HttpWrapper::SendCurlJsonRequest(req, [this](int code, std::string result)
+        {
+            LOG("Json result{}", result);
+            if (code == 200) {
+                LOG("[StatsMaximePlugin] [InitAPI] DATA SENT");
+            }
+            else {
+                LOG("[StatsMaximePlugin] [InitAPI] ERROR DATA NOT SENT");
+                return true;
+            }
+        });
     return false;
+
 }
 
 
@@ -231,6 +250,12 @@ void StatsMaximePlugin::gameEnd(std::string eventName)
         ServerWrapper server = gameWrapper->GetOnlineGame();
         TeamWrapper winningTeam = server.GetGameWinner();
         if (winningTeam.IsNull())return;
+        int millisecondes_waited = 0;
+        while (mmr_player_updated || millisecondes_waited >= 30000)
+        {
+            Sleep(10); // 10 milisecondes 
+            millisecondes_waited += 10;
+        }
 
         mmr_apres_match = getMmrData(playlistId);
         mmr_gagne = mmr_apres_match - mmr_avant_match;
@@ -248,7 +273,6 @@ void StatsMaximePlugin::gameEnd(std::string eventName)
             victory = false;
         }
 
-        long long timestamp = std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count();
         gameHasEnded();
         LOG("===== !GameEnd =====");
     }
@@ -273,12 +297,14 @@ void StatsMaximePlugin::gameDestroyed(std::string eventName)
 
 bool StatsMaximePlugin::sendHistoriqueGame(long long timestamp)
 {
-    
+    // TODO https://bakkesmodwiki.github.io/code_snippets/using_http_wrapper/#perform-an-https-json-request
     LOG("[StatsMaximePlugin] [sendHistoriqueGame]  MMR GAGNE     :" + std::to_string(mmr_gagne));
     LOG("[StatsMaximePlugin] [sendHistoriqueGame]  victory ?     :" + std::to_string(victory));
     LOG("[StatsMaximePlugin] [sendHistoriqueGame]  timestamp     :" + std::to_string(timestamp));
 
-    std::string data = R"({"player_id": ")" + playerId +
+    CurlRequest req;
+    req.url = std::string(API_ENDPOINT) + "/updateHistorique";
+    req.body = R"({"player_id": ")" + playerId +
         R"(", "timestamp": ")" + std::to_string(timestamp) +
         R"(", "victory": )" + std::to_string(victory) +
         R"(, "mmr_won": )" + std::to_string(mmr_gagne) +
@@ -286,14 +312,17 @@ bool StatsMaximePlugin::sendHistoriqueGame(long long timestamp)
         R"(})";
 
 
-    auto res = client.Post("/updateHistorique", data, "application/json");
-    // Vérifier si la requête a réussi
-    if (res && res->status == 200) {
-        LOG("[StatsMaximePlugin] [sendHistoriqueGame] DATA SENT");
-    }
-    else {
-        LOG("[StatsMaximePlugin] [sendHistoriqueGame] ERROR DATA NOT SENT");
-        return true;
-    }
+    HttpWrapper::SendCurlJsonRequest(req, [this](int code, std::string result)
+        {
+            LOG("Json result{}", result);
+            if (code == 200) {
+                LOG("[StatsMaximePlugin] [sendHistoriqueGame] DATA SENT");
+            }
+            else {
+                LOG("[StatsMaximePlugin] [sendHistoriqueGame] ERROR DATA NOT SENT");
+                return true;
+            }
+
+        });
     return false;
 }

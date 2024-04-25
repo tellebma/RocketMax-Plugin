@@ -15,7 +15,7 @@
 //#define HOOK_GAME_DESTORYED "Function TAGame.GameEvent_TA.Destroyed"
 
 #define API_ENDPOINT "http://localhost:5000"
-// #define API_ENDPOINT "http://historl.tellebma.fr"
+//#define API_ENDPOINT "http://historl.tellebma.fr"
 
 httplib::Client client(API_ENDPOINT);
 
@@ -57,14 +57,6 @@ void StatsMaximePlugin::onLoad()
     if (!erreur) {
         gameWrapper->HookEvent(HOOK_MATCH_START, std::bind(&StatsMaximePlugin::gameStart, this, std::placeholders::_1));
         gameWrapper->HookEvent(HOOK_MATCH_ENDED, std::bind(&StatsMaximePlugin::gameEnd, this, std::placeholders::_1));
-        notifierToken = gameWrapper->GetMMRWrapper().RegisterMMRNotifier(
-            [this](UniqueIDWrapper id) {
-                if (!game_running)return;
-                if (id != playerIdWrapper)return;
-                mmr_player_updated = true;
-            }
-        );
-        
         return;
     }
     LOG("[StatsMaximePlugin] ERREUR LORS DU CHARGEMENT DU PLUGIN (SERVEUR HS?!)");
@@ -104,19 +96,10 @@ void StatsMaximePlugin::gameHasEnded()
     return;
 }
 
-void StatsMaximePlugin::gameHasBegun()
-{
-    // remove hook end game detected
-    // add hook start game
-    //gameWrapper->UnhookEventPost(HOOK_MATCH_START);
-    //gameWrapper->HookEvent(HOOK_MATCH_ENDED, std::bind(&StatsMaximePlugin::gameEnd, this, std::placeholders::_1)); 
-    
-    return;
-}
 
 int StatsMaximePlugin::getMmrData(int gamemode)
 {
-    LOG("[StatsMaximePlugin] [GetMmrData] GMode -" + std::to_string(gamemode));
+    LOG("[StatsMaximePlugin] [GetMmrData] GMode -" + gameModes[playlistId]);
     MMRWrapper mmrw = gameWrapper->GetMMRWrapper();
     int mmr = (int)mmrw.GetPlayerMMR(playerIdWrapper, gamemode);
     LOG("[StatsMaximePlugin] [GetMmrData] base  - " + std::to_string(mmr));
@@ -208,14 +191,11 @@ void StatsMaximePlugin::gameStart(std::string eventName)
 {
     if (game_running == 1)return;
     if (!isRankedGame())return;
-
     playlistId = getCurentPlaylist();
     if (playlistId == -1)return;
-    
-    LOG("MODE DE JEU :" + std::to_string(playlistId));
-
     LOG("===== GameStart =====");
-
+    LOG("MODE DE JEU :" + gameModes[playlistId]);
+    
     CarWrapper me = gameWrapper->GetLocalCar();
     if (me.IsNull())return;
 
@@ -231,11 +211,10 @@ void StatsMaximePlugin::gameStart(std::string eventName)
     mmr_avant_match = getMmrData(playlistId);
 
     game_running = 1;
-    // set new hooks
-    gameHasBegun();
-
     LOG("===== !GameStart =====");
 }
+
+
 
 void StatsMaximePlugin::gameEnd(std::string eventName)
 {
@@ -250,17 +229,8 @@ void StatsMaximePlugin::gameEnd(std::string eventName)
         ServerWrapper server = gameWrapper->GetOnlineGame();
         TeamWrapper winningTeam = server.GetGameWinner();
         if (winningTeam.IsNull())return;
-        int millisecondes_waited = 0;
-        while (mmr_player_updated || millisecondes_waited >= 30000)
-        {
-            Sleep(10); // 10 milisecondes 
-            millisecondes_waited += 10;
-        }
-
-        mmr_apres_match = getMmrData(playlistId);
-        mmr_gagne = mmr_apres_match - mmr_avant_match;
         int win_team_num = winningTeam.GetTeamNum();
-
+        
         LOG("GameEnd => my_team_num:" + std::to_string(my_team_num) + " GetTeamNum:" + std::to_string(win_team_num));
         if (my_team_num == win_team_num)
         {
@@ -272,28 +242,17 @@ void StatsMaximePlugin::gameEnd(std::string eventName)
             LOG("===== Game Lost =====");
             victory = false;
         }
-
-        gameHasEnded();
+        gameWrapper->SetTimeout([&](GameWrapper* gameWrapper) { 
+            mmr_apres_match = getMmrData(playlistId);
+            mmr_gagne = mmr_apres_match - mmr_avant_match;
+            LOG("MMR AVANT :" + std::to_string(mmr_avant_match));
+            LOG("MMR APRES :" + std::to_string(mmr_apres_match));
+            LOG("MMR WON :"+std::to_string(mmr_gagne));
+            gameHasEnded();
+        }, 5.0F);
         LOG("===== !GameEnd =====");
     }
 }
-
-void StatsMaximePlugin::gameDestroyed(std::string eventName)
-{
-    if (game_running != 1)return;
-    
-    game_running = 0;
-
-    LOG("===== GameDestroyed =====");
-    // compter comme perdu ??
-    // peut arrviver si le joueur rage quit ou si le serveur va jusqu'a sa fin de vie
-    mmr_apres_match = getMmrData(playlistId);
-    mmr_gagne = mmr_avant_match - mmr_apres_match;
-    victory = false;
-    gameHasEnded();
-    LOG("===== !GameDestroyed =====");
-}
-
 
 bool StatsMaximePlugin::sendHistoriqueGame(long long timestamp)
 {

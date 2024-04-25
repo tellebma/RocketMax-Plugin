@@ -25,12 +25,12 @@ class StatsMaximePlugin: public BakkesMod::Plugin::BakkesModPlugin
 
 	//activate Trigger
 	void gameHasEnded();
-	void gameHasBegun();
+	
 
 	// Trigger
 	void gameStart(std::string eventName);
 	void gameEnd(std::string eventName);
-	void gameDestroyed(std::string eventName);
+	
 
 	
 	

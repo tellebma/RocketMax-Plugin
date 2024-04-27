@@ -14,8 +14,8 @@
 //#define HOOK_MATCH_ENDED "Function TAGame.GameEvent_Soccar_TA.OnMatchWinnerSet"
 //#define HOOK_GAME_DESTORYED "Function TAGame.GameEvent_TA.Destroyed"
 
-#define API_ENDPOINT "http://localhost:5000"
-//#define API_ENDPOINT "http://historl.tellebma.fr"
+//#define API_ENDPOINT "http://localhost:5000"
+#define API_ENDPOINT "https://historl.tellebma.fr"
 
 httplib::Client client(API_ENDPOINT);
 
@@ -156,7 +156,7 @@ bool StatsMaximePlugin::sendMmrUpdate(long long timestamp)
 
 bool StatsMaximePlugin::initAPI()
 {
-    // Obtenez l'identifiant unique du joueur sous forme de chaîne
+    // Obtenez l'identifiant unique du joueur sous forme de chaï¿½ne
     playerIdWrapper = gameWrapper->GetUniqueID();
     playerId = std::to_string(playerIdWrapper.GetUID());
     // Obtenez le nom du joueur

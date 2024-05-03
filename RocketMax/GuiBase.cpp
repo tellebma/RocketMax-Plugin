@@ -3,7 +3,7 @@
 
 std::string SettingsWindowBase::GetPluginName()
 {
-	return "StatsMaximePlugin";
+	return "RocketMax";
 }
 
 void SettingsWindowBase::SetImGuiContext(uintptr_t ctx)
@@ -13,7 +13,7 @@ void SettingsWindowBase::SetImGuiContext(uintptr_t ctx)
 
 std::string PluginWindowBase::GetMenuName()
 {
-	return "StatsMaximePlugin";
+	return "RocketMax";
 }
 
 std::string PluginWindowBase::GetMenuTitle()

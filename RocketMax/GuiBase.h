@@ -15,7 +15,7 @@ public:
 	virtual ~PluginWindowBase() = default;
 
 	bool isWindowOpen_ = false;
-	std::string menuTitle_ = "StatsMaximePlugin";
+	std::string menuTitle_ = "RocketMax";
 
 	std::string GetMenuName() override;
 	std::string GetMenuTitle() override;

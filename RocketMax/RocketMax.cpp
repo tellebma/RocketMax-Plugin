@@ -1,8 +1,7 @@
 #include "pch.h"
-#include "StatsMaximePlugin.h"
+#include "RocketMax.h"
 #include <iostream>
 #include "httplib.h"
-#include "calc.h"
 #include <iostream>
 #include <map>
 #include <chrono>
@@ -14,15 +13,12 @@
 //#define HOOK_MATCH_ENDED "Function TAGame.GameEvent_Soccar_TA.OnMatchWinnerSet"
 //#define HOOK_GAME_DESTORYED "Function TAGame.GameEvent_TA.Destroyed"
 
-//#define API_ENDPOINT "http://localhost:5000"
-#define API_ENDPOINT "https://historl.tellebma.fr"
 
-httplib::Client client(API_ENDPOINT);
 
 using namespace std::this_thread; // sleep_for, sleep_until
 using namespace std::chrono; // nanoseconds, system_clock, seconds
 
-BAKKESMOD_PLUGIN(StatsMaximePlugin, "StatMaxime", plugin_version, PLUGINTYPE_FREEPLAY)
+BAKKESMOD_PLUGIN(RocketMax, "RocketMax", plugin_version, PLUGINTYPE_FREEPLAY)
 
 std::shared_ptr<CVarManagerWrapper> _globalCvarManager;
 enum GameMode {
@@ -50,30 +46,31 @@ std::map<int, std::string> gameModes = {
 };
 
 
-void StatsMaximePlugin::onLoad()
+void RocketMax::onLoad()
 {
 	_globalCvarManager = cvarManager;
     bool erreur = initAPI();
     if (!erreur) {
-        gameWrapper->HookEvent(HOOK_MATCH_START, std::bind(&StatsMaximePlugin::gameStart, this, std::placeholders::_1));
-        gameWrapper->HookEvent(HOOK_MATCH_ENDED, std::bind(&StatsMaximePlugin::gameEnd, this, std::placeholders::_1));
+        gameWrapper->HookEvent(HOOK_MATCH_START, std::bind(&RocketMax::gameStart, this, std::placeholders::_1));
+        gameWrapper->HookEvent(HOOK_MATCH_ENDED, std::bind(&RocketMax::gameEnd, this, std::placeholders::_1));
+        pluginLoaded = true;
         return;
     }
-    LOG("[StatsMaximePlugin] ERREUR LORS DU CHARGEMENT DU PLUGIN (SERVEUR HS?!)");
-    LOG("[StatsMaximePlugin] ERREUR LORS DU CHARGEMENT DU PLUGIN (SERVEUR HS?!)");
-    LOG("[StatsMaximePlugin] ERREUR LORS DU CHARGEMENT DU PLUGIN (SERVEUR HS?!)");
-    LOG("[StatsMaximePlugin] ERREUR LORS DU CHARGEMENT DU PLUGIN (SERVEUR HS?!)");
-    LOG("[StatsMaximePlugin] ERREUR LORS DU CHARGEMENT DU PLUGIN (SERVEUR HS?!)");
+    LOG("[RocketMax] ERREUR LORS DU CHARGEMENT DU PLUGIN (SERVEUR HS?!)");
+    LOG("[RocketMax] ERREUR LORS DU CHARGEMENT DU PLUGIN (SERVEUR HS?!)");
+    LOG("[RocketMax] ERREUR LORS DU CHARGEMENT DU PLUGIN (SERVEUR HS?!)");
+    LOG("[RocketMax] ERREUR LORS DU CHARGEMENT DU PLUGIN (SERVEUR HS?!)");
+    LOG("[RocketMax] ERREUR LORS DU CHARGEMENT DU PLUGIN (SERVEUR HS?!)");
 }
 
-void StatsMaximePlugin::onUnload()
+void RocketMax::onUnload()
 {
     gameWrapper->UnhookEventPost(HOOK_MATCH_START);
     gameWrapper->UnhookEventPost(HOOK_MATCH_ENDED);
-	LOG("[StatsMaximePlugin] Plugin unloaded");
+	LOG("[RocketMax] Plugin unloaded");
 }
 
-void StatsMaximePlugin::gameHasEnded()
+void RocketMax::gameHasEnded()
 {
     // remove hook end game detected
     // add hook start game
@@ -84,7 +81,7 @@ void StatsMaximePlugin::gameHasEnded()
     sendMmrUpdate(timestamp);
     sendHistoriqueGame(timestamp);
 
-    //gameWrapper->HookEvent(HOOK_MATCH_START, std::bind(&StatsMaximePlugin::gameStart, this, std::placeholders::_1));
+    //gameWrapper->HookEvent(HOOK_MATCH_START, std::bind(&RocketMax::gameStart, this, std::placeholders::_1));
     game_running = 0;
     mmr_player_updated = false;
     my_team_num = -1;
@@ -97,38 +94,38 @@ void StatsMaximePlugin::gameHasEnded()
 }
 
 
-int StatsMaximePlugin::getMmrData(int gamemode)
+int RocketMax::getMmrData(int gamemode)
 {
-    LOG("[StatsMaximePlugin] [GetMmrData] GMode -" + gameModes[playlistId]);
+    LOG("[RocketMax] [GetMmrData] GMode -" + gameModes[playlistId]);
     MMRWrapper mmrw = gameWrapper->GetMMRWrapper();
     int mmr = (int)mmrw.GetPlayerMMR(playerIdWrapper, gamemode);
-    LOG("[StatsMaximePlugin] [GetMmrData] base  - " + std::to_string(mmr));
+    LOG("[RocketMax] [GetMmrData] base  - " + std::to_string(mmr));
     return mmr;
 }
 
-int StatsMaximePlugin::getCurentPlaylist()
+int RocketMax::getCurentPlaylist()
 {
     ServerWrapper sw = gameWrapper->GetCurrentGameState();
     if (!sw) return -1;
     GameSettingPlaylistWrapper playlist = sw.GetPlaylist();
     if (!playlist) return -1;
     int playlistId = playlist.GetPlaylistId();
-    LOG("[StatsMaximePlugin] [getCurentPlaylist] playlistId: " + std::to_string(playlistId)+ " - Gamemode: " + gameModes[playlistId]);
+    LOG("[RocketMax] [getCurentPlaylist] playlistId: " + std::to_string(playlistId)+ " - Gamemode: " + gameModes[playlistId]);
     return playlistId;
 }
 
-bool StatsMaximePlugin::isRankedGame()
+bool RocketMax::isRankedGame()
 {
     return gameWrapper->IsInOnlineGame() && !gameWrapper->IsInReplay() && !gameWrapper->IsInFreeplay();
 }
 
-bool StatsMaximePlugin::sendMmrUpdate(long long timestamp)
+bool RocketMax::sendMmrUpdate(long long timestamp)
 {
-    LOG("[StatsMaximePlugin] [sendMmrUpdate] -- SENDING DATA --");
-    LOG("[StatsMaximePlugin] [sendMmrUpdate]  Player ID     :" + playerId);
-    LOG("[StatsMaximePlugin] [sendMmrUpdate]  Gamemode ID   :" + std::to_string(playlistId));
-    LOG("[StatsMaximePlugin] [sendMmrUpdate]  Gamemode NAME :" + gameModes[playlistId]);
-    LOG("[StatsMaximePlugin] [sendMmrUpdate]  MMR           :" + std::to_string(mmr_apres_match));
+    LOG("[RocketMax] [sendMmrUpdate] -- SENDING DATA --");
+    LOG("[RocketMax] [sendMmrUpdate]  Player ID     :" + playerId);
+    LOG("[RocketMax] [sendMmrUpdate]  Gamemode ID   :" + std::to_string(playlistId));
+    LOG("[RocketMax] [sendMmrUpdate]  Gamemode NAME :" + gameModes[playlistId]);
+    LOG("[RocketMax] [sendMmrUpdate]  MMR           :" + std::to_string(mmr_apres_match));
 
     CurlRequest req;
     req.url = std::string(API_ENDPOINT) + "/updateMmr";
@@ -143,10 +140,10 @@ bool StatsMaximePlugin::sendMmrUpdate(long long timestamp)
     {
         LOG("Json result{}", result);
         if (code == 200) {
-            LOG("[StatsMaximePlugin] [sendMmrUpdate] DATA SENT");
+            LOG("[RocketMax] [sendMmrUpdate] DATA SENT");
         }
         else {
-            LOG("[StatsMaximePlugin] [sendMmrUpdate] ERROR DATA NOT SENT");
+            LOG("[RocketMax] [sendMmrUpdate] ERROR DATA NOT SENT");
             return true;
         }
        
@@ -154,7 +151,7 @@ bool StatsMaximePlugin::sendMmrUpdate(long long timestamp)
     return false;
 }
 
-bool StatsMaximePlugin::initAPI()
+bool RocketMax::initAPI()
 {
     // Obtenez l'identifiant unique du joueur sous forme de cha�ne
     playerIdWrapper = gameWrapper->GetUniqueID();
@@ -162,8 +159,8 @@ bool StatsMaximePlugin::initAPI()
     // Obtenez le nom du joueur
     playerName = gameWrapper->GetPlayerName().ToString();
 
-    LOG("[StatsMaximePlugin] [InitAPI] " + playerId);
-    LOG("[StatsMaximePlugin] [InitAPI] " + playerName);
+    LOG("[RocketMax] [InitAPI] " + playerId);
+    LOG("[RocketMax] [InitAPI] " + playerName);
 
     CurlRequest req;
     req.url = std::string(API_ENDPOINT) + "/initPlayer";
@@ -175,10 +172,10 @@ bool StatsMaximePlugin::initAPI()
         {
             LOG("Json result{}", result);
             if (code == 200) {
-                LOG("[StatsMaximePlugin] [InitAPI] DATA SENT");
+                LOG("[RocketMax] [InitAPI] DATA SENT");
             }
             else {
-                LOG("[StatsMaximePlugin] [InitAPI] ERROR DATA NOT SENT");
+                LOG("[RocketMax] [InitAPI] ERROR DATA NOT SENT");
                 return true;
             }
         });
@@ -187,7 +184,7 @@ bool StatsMaximePlugin::initAPI()
 }
 
 
-void StatsMaximePlugin::gameStart(std::string eventName)
+void RocketMax::gameStart(std::string eventName)
 {
     if (game_running == 1)return;
     if (!isRankedGame())return;
@@ -216,7 +213,7 @@ void StatsMaximePlugin::gameStart(std::string eventName)
 
 
 
-void StatsMaximePlugin::gameEnd(std::string eventName)
+void RocketMax::gameEnd(std::string eventName)
 {
     if (game_running != 1)return;
     
@@ -254,12 +251,12 @@ void StatsMaximePlugin::gameEnd(std::string eventName)
     }
 }
 
-bool StatsMaximePlugin::sendHistoriqueGame(long long timestamp)
+bool RocketMax::sendHistoriqueGame(long long timestamp)
 {
     // TODO https://bakkesmodwiki.github.io/code_snippets/using_http_wrapper/#perform-an-https-json-request
-    LOG("[StatsMaximePlugin] [sendHistoriqueGame]  MMR GAGNE     :" + std::to_string(mmr_gagne));
-    LOG("[StatsMaximePlugin] [sendHistoriqueGame]  victory ?     :" + std::to_string(victory));
-    LOG("[StatsMaximePlugin] [sendHistoriqueGame]  timestamp     :" + std::to_string(timestamp));
+    LOG("[RocketMax] [sendHistoriqueGame]  MMR GAGNE     :" + std::to_string(mmr_gagne));
+    LOG("[RocketMax] [sendHistoriqueGame]  victory ?     :" + std::to_string(victory));
+    LOG("[RocketMax] [sendHistoriqueGame]  timestamp     :" + std::to_string(timestamp));
 
     CurlRequest req;
     req.url = std::string(API_ENDPOINT) + "/updateHistorique";
@@ -275,10 +272,10 @@ bool StatsMaximePlugin::sendHistoriqueGame(long long timestamp)
         {
             LOG("Json result{}", result);
             if (code == 200) {
-                LOG("[StatsMaximePlugin] [sendHistoriqueGame] DATA SENT");
+                LOG("[RocketMax] [sendHistoriqueGame] DATA SENT");
             }
             else {
-                LOG("[StatsMaximePlugin] [sendHistoriqueGame] ERROR DATA NOT SENT");
+                LOG("[RocketMax] [sendHistoriqueGame] ERROR DATA NOT SENT");
                 return true;
             }
 

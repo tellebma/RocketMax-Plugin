@@ -1,18 +1,21 @@
-# Stats Maxime Plugin
+# RocketMax
 
 Ce plugin est toujours en développement. 
-Il permet d'envoyer a un serveur externe par défaut [histo.tellebma.fr](https://historl.tellebma.fr/) les données de fin de partie Victoire/défaite, MMR gagngé, etc
+Il permet d'envoyer a un serveur externe par défaut [histo.tellebma.fr](https://rocketmax.tellebma.fr/) les données de fin de partie Victoire/défaite, MMR gagngé, etc
 
-L'interface front est également toujours en développement [Github front](https://github.com/tellebma/FrontStatsPlugin)
+L'interface front est également toujours en développement [Github front](https://github.com/tellebma/RocketMax-FrontEnd)
 
-![page principale, affichage global du compte](doc/main_page.png)
-![graphique avec l'elo enregistré en fonction du temps](doc/graph_page.png)
+
+![page principale, affichage global du compte](https://github.com/tellebma/RocketMax-FrontEnd/blob/main/doc/main_page.png)
 
 
 # Release 
-Vous pouvez trouver le fichier .dll du plugin a tout moment de son développement dans plugin/StatsMaximePlugin.dll
+Vous pouvez trouver le fichier .dll du plugin a tout moment de son développement dans plugin/RocketMax.dll
+```ps
+echo 'plugin load rocketmax' >> C:\Users\%username%\AppData\Roaming\bakkesmod\bakkesmod\cfg\plugin.cfg
+```
 
-Il est possible de changer le serveur target pour cela modifier la variable API_ENDPOINT dans le fichier StatsMaximePLugin.cpp
+Il est possible de changer le serveur target pour cela modifier la variable API_ENDPOINT dans le fichier RocketMax.cpp
 ```cpp
 #define API_ENDPOINT "http://localhost:5000"
 ```

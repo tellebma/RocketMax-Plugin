@@ -10,6 +10,9 @@ L'interface front est également toujours en développement [Github front](https
 
 
 # Release 
+
+see: [Release TAG 2.0.0](https://github.com/tellebma/RocketMax-Plugin/releases/tag/2.0.0)  
+
 Vous pouvez trouver le fichier .dll du plugin a tout moment de son développement dans plugin/RocketMax.dll
 ```ps
 echo 'plugin load rocketmax' >> C:\Users\%username%\AppData\Roaming\bakkesmod\bakkesmod\cfg\plugin.cfg
@@ -19,6 +22,7 @@ Il est possible de changer le serveur target pour cela modifier la variable API_
 ```cpp
 #define API_ENDPOINT "http://localhost:5000"
 ```
+
 
 
 

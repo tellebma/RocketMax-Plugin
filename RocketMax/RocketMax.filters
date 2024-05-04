@@ -75,16 +75,13 @@
     <ClCompile Include="pch.cpp">
       <Filter>PCH</Filter>
     </ClCompile>
-    <ClCompile Include="StatsMaximePlugin.cpp">
+    <ClCompile Include="RocketMax.cpp">
       <Filter>Plugin\src</Filter>
     </ClCompile>
     <ClCompile Include="GuiBase.cpp">
       <Filter>Plugin\src</Filter>
     </ClCompile>
-    <ClCompile Include="calc.cpp">
-      <Filter>Plugin\src</Filter>
-    </ClCompile>
-    <ClCompile Include="StatsMaximeSettings.cpp">
+    <ClCompile Include="RocketMaxSettings.cpp">
       <Filter>Plugin\src</Filter>
     </ClCompile>
   </ItemGroup>
@@ -137,7 +134,7 @@
     <ClInclude Include="pch.h">
       <Filter>PCH</Filter>
     </ClInclude>
-    <ClInclude Include="StatsMaximePlugin.h">
+    <ClInclude Include="RocketMax.h">
       <Filter>Plugin\header</Filter>
     </ClInclude>
     <ClInclude Include="logging.h">
@@ -146,12 +143,9 @@
     <ClInclude Include="GuiBase.h">
       <Filter>Plugin\header</Filter>
     </ClInclude>
-    <ClInclude Include="calc.h">
-      <Filter>Plugin\header</Filter>
-    </ClInclude>
   </ItemGroup>
   <ItemGroup>
-    <ResourceCompile Include="StatsMaximePlugin.rc">
+    <ResourceCompile Include="RocketMax.rc">
       <Filter>Resource Files</Filter>
     </ResourceCompile>
   </ItemGroup>

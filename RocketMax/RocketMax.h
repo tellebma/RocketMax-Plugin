@@ -59,7 +59,7 @@ class RocketMax: public BakkesMod::Plugin::BakkesModPlugin
 
 	// vars
 	//#define API_ENDPOINT "http://localhost:8080"
-	#define API_ENDPOINT "http://localhost:8080"
+	#define API_ENDPOINT "https://rocketmax.tellebma.fr"
 	#define GITHUB_API_RELEASES "https://api.github.com/repos/tellebma/RocketMax-Plugin/releases/latest"
 
 	// Vars used by prgm

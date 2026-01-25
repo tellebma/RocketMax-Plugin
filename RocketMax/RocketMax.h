@@ -46,11 +46,22 @@ class RocketMax: public BakkesMod::Plugin::BakkesModPlugin
 	void processOfflineQueue();
 	std::string getQueueFilePath();
 
+	// Auto-update
+	void checkForUpdates();
+	void downloadUpdate();
+	bool parseVersionString(const std::string& version, int& major, int& minor, int& patch);
+	bool isNewerVersion(const std::string& remoteVersion);
+	std::string getPluginPath();
+	std::string getUpdateFilePath();
+
 
 
 	// vars
 	//#define API_ENDPOINT "http://localhost:8080"
 	#define API_ENDPOINT "http://localhost:8080"
+	#define GITHUB_API_RELEASES "https://api.github.com/repos/tellebma/RocketMax-Plugin/releases/latest"
+	#define GITHUB_REPO_OWNER "tellebma"
+	#define GITHUB_REPO_NAME "RocketMax-Plugin"
 
 	// Vars used by prgm
 	bool pluginLoaded = false;
@@ -92,7 +103,17 @@ class RocketMax: public BakkesMod::Plugin::BakkesModPlugin
 	std::shared_ptr<bool> cvar_enable_toasts;
 	std::shared_ptr<bool> cvar_enable_overlay;
 	std::shared_ptr<bool> cvar_enable_streak_alerts;
+	std::shared_ptr<bool> cvar_enable_auto_update;
 	std::shared_ptr<std::string> cvar_server_url;
+
+	// Auto-update state
+	bool update_available = false;
+	bool update_checking = false;
+	bool update_downloading = false;
+	bool update_ready = false;
+	std::string latest_version = "";
+	std::string update_download_url = "";
+	std::string update_error = "";
 
 	// Overlay state
 	bool overlay_visible = true;

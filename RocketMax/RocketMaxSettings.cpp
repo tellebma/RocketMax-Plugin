@@ -50,10 +50,64 @@ void RocketMax::RenderSettings() {
         }
     }
 
+    // Auto-update toggle
+    CVarWrapper autoUpdateCvar = cvarManager->getCvar("rocketmax_enable_auto_update");
+    if (autoUpdateCvar) {
+        bool autoUpdateEnabled = autoUpdateCvar.getBoolValue();
+        if (ImGui::Checkbox("Verifier les mises a jour automatiquement", &autoUpdateEnabled)) {
+            autoUpdateCvar.setValue(autoUpdateEnabled);
+        }
+    }
+
     ImGui::Spacing();
 
     // Server URL (read-only display)
     ImGui::TextUnformatted(("Serveur: " + std::string(API_ENDPOINT)).c_str());
+
+    ImGui::Spacing();
+    ImGui::Separator();
+    ImGui::Spacing();
+
+    // Update Section
+    ImGui::TextUnformatted("Mises a jour");
+    ImGui::Spacing();
+
+    if (update_checking) {
+        ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.0f, 1.0f), "Verification en cours...");
+    }
+    else if (update_ready) {
+        ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), "Mise a jour prete !");
+        ImGui::TextUnformatted("Redemarrez Rocket League pour appliquer la mise a jour.");
+        ImGui::Spacing();
+        ImGui::TextUnformatted(("Nouvelle version: " + latest_version).c_str());
+    }
+    else if (update_available) {
+        ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.0f, 1.0f), "Nouvelle version disponible !");
+        ImGui::TextUnformatted(("Version actuelle: " + std::string(plugin_version)).c_str());
+        ImGui::TextUnformatted(("Nouvelle version: " + latest_version).c_str());
+        ImGui::Spacing();
+
+        if (update_downloading) {
+            ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.0f, 1.0f), "Telechargement en cours...");
+        }
+        else {
+            if (ImGui::Button("Telecharger la mise a jour")) {
+                downloadUpdate();
+            }
+        }
+    }
+    else {
+        ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), "Vous avez la derniere version");
+        ImGui::Spacing();
+        if (ImGui::Button("Verifier les mises a jour")) {
+            checkForUpdates();
+        }
+    }
+
+    if (!update_error.empty()) {
+        ImGui::Spacing();
+        ImGui::TextColored(ImVec4(1.0f, 0.0f, 0.0f, 1.0f), ("Erreur: " + update_error).c_str());
+    }
 
     ImGui::Spacing();
     ImGui::Separator();

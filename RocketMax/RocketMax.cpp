@@ -70,8 +70,17 @@ void RocketMax::onLoad()
     cvarManager->registerCvar("rocketmax_server_url", API_ENDPOINT, "Server URL for data sync")
         .bindTo(cvar_server_url);
 
+    cvar_enable_auto_update = std::make_shared<bool>(true);
+    cvarManager->registerCvar("rocketmax_enable_auto_update", "1", "Enable automatic update checking")
+        .bindTo(cvar_enable_auto_update);
+
     // Process any offline queue from previous sessions
     processOfflineQueue();
+
+    // Check for updates if enabled
+    if (*cvar_enable_auto_update) {
+        checkForUpdates();
+    }
 
     bool erreur = initAPI();
     if (!erreur) {
@@ -609,6 +618,285 @@ void RocketMax::processOfflineQueue()
     // Note: In a real implementation, you'd parse the JSON and retry each request
     // For now, we just log that we found pending items
     LOG("[RocketMax] [OfflineQueue] Found pending items - will retry on next connection");
+}
+
+// ============ AUTO-UPDATE ============
+
+std::filesystem::path RocketMax::getPluginsFolder()
+{
+    // Use std::filesystem to safely navigate from data folder to plugins folder
+    // Data folder: %APPDATA%/bakkesmod/bakkesmod/data
+    // Plugins folder: %APPDATA%/bakkesmod/bakkesmod/plugins
+    std::filesystem::path dataFolder = gameWrapper->GetDataFolder();
+    std::filesystem::path bakkesmodFolder = dataFolder.parent_path();  // Go up from "data"
+    return bakkesmodFolder / "plugins";
+}
+
+std::filesystem::path RocketMax::getUpdateScriptPath()
+{
+    return gameWrapper->GetDataFolder() / "rocketmax_update.ps1";
+}
+
+std::string RocketMax::extractJsonValue(const std::string& json, const std::string& key)
+{
+    // Simple JSON value extractor for string values
+    // Looks for: "key": "value" or "key":"value"
+    std::string searchKey = "\"" + key + "\"";
+    size_t keyPos = json.find(searchKey);
+    if (keyPos == std::string::npos) {
+        return "";
+    }
+
+    // Find the colon after the key
+    size_t colonPos = json.find(":", keyPos + searchKey.length());
+    if (colonPos == std::string::npos) {
+        return "";
+    }
+
+    // Skip whitespace and find opening quote
+    size_t quoteStart = json.find("\"", colonPos + 1);
+    if (quoteStart == std::string::npos) {
+        return "";
+    }
+
+    // Find closing quote (handle escaped quotes)
+    size_t quoteEnd = quoteStart + 1;
+    while (quoteEnd < json.length()) {
+        if (json[quoteEnd] == '\"' && json[quoteEnd - 1] != '\\') {
+            break;
+        }
+        quoteEnd++;
+    }
+
+    if (quoteEnd >= json.length()) {
+        return "";
+    }
+
+    return json.substr(quoteStart + 1, quoteEnd - quoteStart - 1);
+}
+
+bool RocketMax::parseVersionString(const std::string& version, int& major, int& minor, int& patch)
+{
+    // Parse version string like "v1.2.3" or "1.2.3"
+    std::string ver = version;
+    if (!ver.empty() && (ver[0] == 'v' || ver[0] == 'V')) {
+        ver = ver.substr(1);
+    }
+
+    // Remove any suffix like "-beta", "-rc1", etc.
+    size_t dashPos = ver.find('-');
+    if (dashPos != std::string::npos) {
+        ver = ver.substr(0, dashPos);
+    }
+
+    int parsed = sscanf(ver.c_str(), "%d.%d.%d", &major, &minor, &patch);
+    return parsed >= 3;
+}
+
+bool RocketMax::isNewerVersion(const std::string& remoteVersion)
+{
+    int remoteMajor = 0, remoteMinor = 0, remotePatch = 0;
+    if (!parseVersionString(remoteVersion, remoteMajor, remoteMinor, remotePatch)) {
+        LOG("[RocketMax] [Update] Failed to parse remote version: " + remoteVersion);
+        return false;
+    }
+
+    LOG("[RocketMax] [Update] Comparing versions - Local: " +
+        std::to_string(VERSION_MAJOR) + "." + std::to_string(VERSION_MINOR) + "." + std::to_string(VERSION_PATCH) +
+        " vs Remote: " + std::to_string(remoteMajor) + "." + std::to_string(remoteMinor) + "." + std::to_string(remotePatch));
+
+    if (remoteMajor > VERSION_MAJOR) return true;
+    if (remoteMajor < VERSION_MAJOR) return false;
+    if (remoteMinor > VERSION_MINOR) return true;
+    if (remoteMinor < VERSION_MINOR) return false;
+    if (remotePatch > VERSION_PATCH) return true;
+    return false;
+}
+
+void RocketMax::checkForUpdates()
+{
+    if (update_checking.load()) {
+        LOG("[RocketMax] [Update] Already checking for updates...");
+        return;
+    }
+
+    update_checking.store(true);
+    update_error = "";
+    LOG("[RocketMax] [Update] Checking for updates...");
+
+    CurlRequest req;
+    req.url = GITHUB_API_RELEASES;
+    req.body = "";
+
+    HttpWrapper::SendCurlJsonRequest(req, [this](int code, std::string result)
+    {
+        update_checking.store(false);
+
+        if (code != 200) {
+            LOG("[RocketMax] [Update] Failed to check for updates. HTTP code: " + std::to_string(code));
+            update_error = "Erreur de connexion (code " + std::to_string(code) + ")";
+            return;
+        }
+
+        LOG("[RocketMax] [Update] Received response from GitHub API");
+
+        // Extract tag_name using helper function
+        latest_version = extractJsonValue(result, "tag_name");
+        if (latest_version.empty()) {
+            LOG("[RocketMax] [Update] Could not find tag_name in response");
+            update_error = "Format de reponse invalide";
+            return;
+        }
+        LOG("[RocketMax] [Update] Latest version: " + latest_version);
+
+        // Find download URL for RocketMax.dll in assets array
+        // We need to find the browser_download_url that contains "RocketMax.dll"
+        std::string dllName = "RocketMax.dll";
+        size_t dllPos = result.find(dllName);
+        if (dllPos != std::string::npos) {
+            // Look backwards for browser_download_url (it's in the same asset object)
+            std::string urlKey = "\"browser_download_url\"";
+            size_t urlKeyPos = result.rfind(urlKey, dllPos);
+            if (urlKeyPos != std::string::npos) {
+                // Extract the URL value
+                size_t colonPos = result.find(":", urlKeyPos + urlKey.length());
+                size_t quoteStart = result.find("\"", colonPos + 1);
+                size_t quoteEnd = result.find("\"", quoteStart + 1);
+                if (quoteStart != std::string::npos && quoteEnd != std::string::npos) {
+                    update_download_url = result.substr(quoteStart + 1, quoteEnd - quoteStart - 1);
+                    LOG("[RocketMax] [Update] Download URL: " + update_download_url);
+                }
+            }
+        }
+
+        // Check if this is a newer version
+        if (isNewerVersion(latest_version)) {
+            update_available.store(true);
+            LOG("[RocketMax] [Update] New version available: " + latest_version);
+
+            gameWrapper->Execute([this](GameWrapper* gw) {
+                if (*cvar_enable_toasts) {
+                    std::string msg = "Nouvelle version disponible: " + latest_version;
+                    gw->Toast("RocketMax Update", msg, "default", 8.0f, ToastType_Info);
+                }
+            });
+        }
+        else {
+            update_available.store(false);
+            LOG("[RocketMax] [Update] Already on latest version");
+        }
+    });
+}
+
+void RocketMax::launchUpdateScript()
+{
+    if (update_download_url.empty()) {
+        update_error = "URL de telechargement non disponible";
+        LOG("[RocketMax] [Update] No download URL available");
+        return;
+    }
+
+    update_error = "";
+    LOG("[RocketMax] [Update] Creating update script...");
+
+    // Get paths
+    std::filesystem::path pluginsFolder = getPluginsFolder();
+    std::filesystem::path pluginPath = pluginsFolder / "RocketMax.dll";
+    std::filesystem::path scriptPath = getUpdateScriptPath();
+
+    // Create PowerShell script that will:
+    // 1. Download the DLL from GitHub
+    // 2. Verify the download (check file size > 100KB for a valid DLL)
+    // 3. Replace the old plugin
+    // 4. Clean up
+    std::ofstream scriptFile(scriptPath);
+    if (!scriptFile.is_open()) {
+        update_error = "Impossible de creer le script";
+        LOG("[RocketMax] [Update] Could not create update script: " + scriptPath.string());
+        return;
+    }
+
+    scriptFile << "# RocketMax Auto-Update Script\n";
+    scriptFile << "# Generated by RocketMax Plugin v" << plugin_version << "\n";
+    scriptFile << "$ErrorActionPreference = 'Stop'\n\n";
+
+    scriptFile << "$downloadUrl = '" << update_download_url << "'\n";
+    scriptFile << "$pluginPath = '" << pluginPath.string() << "'\n";
+    scriptFile << "$tempPath = '" << (pluginsFolder / "RocketMax_new.dll").string() << "'\n";
+    scriptFile << "$backupPath = '" << (pluginsFolder / "RocketMax_backup.dll").string() << "'\n\n";
+
+    scriptFile << "Write-Host 'RocketMax Update Script' -ForegroundColor Cyan\n";
+    scriptFile << "Write-Host '========================' -ForegroundColor Cyan\n";
+    scriptFile << "Write-Host ''\n\n";
+
+    scriptFile << "try {\n";
+    scriptFile << "    Write-Host 'Downloading new version...' -ForegroundColor Yellow\n";
+    scriptFile << "    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12\n";
+    scriptFile << "    Invoke-WebRequest -Uri $downloadUrl -OutFile $tempPath -UseBasicParsing\n\n";
+
+    scriptFile << "    # Verify download - DLL should be at least 100KB\n";
+    scriptFile << "    $fileSize = (Get-Item $tempPath).Length\n";
+    scriptFile << "    if ($fileSize -lt 102400) {\n";
+    scriptFile << "        throw \"Downloaded file is too small ($fileSize bytes). Download may be corrupted.\"\n";
+    scriptFile << "    }\n";
+    scriptFile << "    Write-Host \"Downloaded successfully ($fileSize bytes)\" -ForegroundColor Green\n\n";
+
+    scriptFile << "    # Backup current version\n";
+    scriptFile << "    if (Test-Path $pluginPath) {\n";
+    scriptFile << "        Write-Host 'Backing up current version...' -ForegroundColor Yellow\n";
+    scriptFile << "        Copy-Item $pluginPath $backupPath -Force\n";
+    scriptFile << "    }\n\n";
+
+    scriptFile << "    # Replace plugin\n";
+    scriptFile << "    Write-Host 'Installing new version...' -ForegroundColor Yellow\n";
+    scriptFile << "    Move-Item $tempPath $pluginPath -Force\n\n";
+
+    scriptFile << "    Write-Host ''\n";
+    scriptFile << "    Write-Host 'Update complete!' -ForegroundColor Green\n";
+    scriptFile << "    Write-Host 'Please restart Rocket League to use the new version.' -ForegroundColor Cyan\n";
+    scriptFile << "    Write-Host ''\n";
+    scriptFile << "}\n";
+    scriptFile << "catch {\n";
+    scriptFile << "    Write-Host \"Error: $_\" -ForegroundColor Red\n";
+    scriptFile << "    if (Test-Path $backupPath) {\n";
+    scriptFile << "        Write-Host 'Restoring backup...' -ForegroundColor Yellow\n";
+    scriptFile << "        Move-Item $backupPath $pluginPath -Force\n";
+    scriptFile << "    }\n";
+    scriptFile << "    if (Test-Path $tempPath) { Remove-Item $tempPath -Force }\n";
+    scriptFile << "    exit 1\n";
+    scriptFile << "}\n";
+    scriptFile << "finally {\n";
+    scriptFile << "    # Clean up backup after successful install\n";
+    scriptFile << "    if (Test-Path $backupPath) { Remove-Item $backupPath -Force }\n";
+    scriptFile << "}\n\n";
+
+    scriptFile << "Write-Host 'Press any key to close...'\n";
+    scriptFile << "$null = $Host.UI.RawUI.ReadKey('NoEcho,IncludeKeyDown')\n";
+
+    scriptFile.close();
+    LOG("[RocketMax] [Update] Created update script: " + scriptPath.string());
+
+    // Launch the PowerShell script
+    std::string command = "powershell.exe -ExecutionPolicy Bypass -File \"" + scriptPath.string() + "\"";
+    LOG("[RocketMax] [Update] Launching: " + command);
+
+    // Use ShellExecute to run the script (shows a window so user can see progress)
+    HINSTANCE result = ShellExecuteA(NULL, "open", "powershell.exe",
+        ("-ExecutionPolicy Bypass -File \"" + scriptPath.string() + "\"").c_str(),
+        NULL, SW_SHOW);
+
+    if ((intptr_t)result <= 32) {
+        update_error = "Impossible de lancer le script (erreur " + std::to_string((intptr_t)result) + ")";
+        LOG("[RocketMax] [Update] Failed to launch script: " + std::to_string((intptr_t)result));
+        return;
+    }
+
+    update_ready.store(true);
+    update_available.store(false);
+
+    gameWrapper->Execute([this](GameWrapper* gw) {
+        gw->Toast("RocketMax Update", "Script de mise a jour lance!", "default", 5.0f, ToastType_OK);
+    });
 }
 
 // ============ OVERLAY WINDOW ============

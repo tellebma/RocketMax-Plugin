@@ -11,18 +11,9 @@ L'interface front est également toujours en développement [Github front](https
 
 # Release 
 
-see: [Release TAG 2.0.0](https://github.com/tellebma/RocketMax-Plugin/releases/tag/2.0.0)  
+see: [last release](https://github.com/tellebma/RocketMax-Plugin/releases)  
 
-Vous pouvez trouver le fichier .dll du plugin a tout moment de son développement dans plugin/RocketMax.dll
-```ps
-echo 'plugin load rocketmax' >> C:\Users\%username%\AppData\Roaming\bakkesmod\bakkesmod\cfg\plugin.cfg
-```
-
-Il est possible de changer le serveur target pour cela modifier la variable API_ENDPOINT dans le fichier RocketMax.cpp
-```cpp
-#define API_ENDPOINT "http://localhost:5000"
-```
-
-
-
-
+### Option 1 : Installation automatique (Recommandee)
+- Telecharger Install-RocketMax.bat
+- Double-cliquer dessus
+- Suivre les instructions a l'ecran

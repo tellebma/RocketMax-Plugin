@@ -1,0 +1,159 @@
+name: Build & Release Plugin
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  SOLUTION_FILE: RocketMax.sln
+  BUILD_CONFIGURATION: Release
+  BUILD_PLATFORM: x64
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup MSBuild
+        uses: microsoft/setup-msbuild@v2
+
+      - name: Download BakkesMod SDK
+        run: |
+          $sdkUrl = "https://github.com/bakkesmodorg/BakkesModSDK/archive/refs/heads/main.zip"
+          $sdkZip = "$env:RUNNER_TEMP\bakkesmodsdk.zip"
+          $sdkPath = "$env:RUNNER_TEMP\bakkesmodsdk"
+
+          Write-Host "Downloading BakkesMod SDK..."
+          Invoke-WebRequest -Uri $sdkUrl -OutFile $sdkZip
+
+          Write-Host "Extracting SDK..."
+          Expand-Archive -Path $sdkZip -DestinationPath $sdkPath -Force
+
+          $extractedPath = "$sdkPath\BakkesModSDK-main"
+          echo "BAKKESMOD_SDK_PATH=$extractedPath" >> $env:GITHUB_ENV
+        shell: pwsh
+
+      - name: Create CI BakkesMod.props
+        run: |
+          $propsContent = @"
+          <?xml version="1.0" encoding="utf-8"?>
+          <Project DefaultTargets="ShowBakkesInfo" ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+            <ImportGroup Label="PropertySheets" />
+            <PropertyGroup Label="UserMacros">
+              <BakkesModPath>${{ env.BAKKESMOD_SDK_PATH }}</BakkesModPath>
+            </PropertyGroup>
+            <ItemDefinitionGroup>
+              <ClCompile>
+                <AdditionalIncludeDirectories>`$(BakkesModPath)\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+              </ClCompile>
+              <Link>
+                <AdditionalLibraryDirectories>`$(BakkesModPath)\lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+                <AdditionalDependencies>pluginsdk.lib;%(AdditionalDependencies)</AdditionalDependencies>
+              </Link>
+              <PostBuildEvent>
+                <Command></Command>
+              </PostBuildEvent>
+            </ItemDefinitionGroup>
+            <ItemGroup />
+            <Target Name="ShowBakkesInfo" BeforeTargets="PrepareForBuild">
+              <Message Text="Using bakkes found at `$(BakkesModPath)" Importance="normal" />
+            </Target>
+          </Project>
+          "@
+
+          $propsContent | Out-File -FilePath "RocketMax\BakkesMod.props" -Encoding utf8
+        shell: pwsh
+
+      - name: Build
+        run: |
+          msbuild ${{ env.SOLUTION_FILE }} /p:Configuration=${{ env.BUILD_CONFIGURATION }} /p:Platform=${{ env.BUILD_PLATFORM }} /m
+        shell: pwsh
+
+      - name: Prepare release files
+        run: |
+          New-Item -ItemType Directory -Path "release" -Force
+          Copy-Item "plugins/RocketMax.dll" "release/"
+          Copy-Item "install-rocketmax.ps1" "release/"
+          Copy-Item "Install-RocketMax.bat" "release/"
+        shell: pwsh
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: RocketMax-Plugin
+          path: release/
+          if-no-files-found: error
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+
+    permissions:
+      contents: write
+      issues: write
+      pull-requests: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: RocketMax-Plugin
+          path: release/
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install semantic-release
+        run: |
+          npm install -g semantic-release \
+            @semantic-release/commit-analyzer \
+            @semantic-release/release-notes-generator \
+            @semantic-release/github \
+            conventional-changelog-conventionalcommits
+
+      - name: Run semantic-release
+        id: semantic
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          OUTPUT=$(npx semantic-release 2>&1) || true
+          echo "$OUTPUT"
+
+          # Chercher la version publiee
+          VERSION=$(echo "$OUTPUT" | grep -oP 'Published release \K[0-9]+\.[0-9]+\.[0-9]+' || echo "")
+          if [ -n "$VERSION" ]; then
+            echo "version=$VERSION" >> $GITHUB_OUTPUT
+            echo "released=true" >> $GITHUB_OUTPUT
+            echo "Release v$VERSION created!"
+          else
+            echo "released=false" >> $GITHUB_OUTPUT
+            echo "No new release"
+          fi
+
+      - name: Add installation instructions to release
+        if: steps.semantic.outputs.released == 'true'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION="${{ steps.semantic.outputs.version }}"
+          TAG="v$VERSION"
+          echo "Updating release $TAG with installation instructions..."
+          gh release view "$TAG" --json body -q '.body' > /tmp/current-body.md 2>/dev/null || echo "" > /tmp/current-body.md
+          cat .github/RELEASE_TEMPLATE.md >> /tmp/current-body.md
+          gh release edit "$TAG" --notes-file /tmp/current-body.md
+          echo "Release $TAG updated successfully!"

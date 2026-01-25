@@ -3,11 +3,13 @@
 
 void RocketMax::RenderSettings() {
     ImGui::TextUnformatted("- RocketMax -");
+    ImGui::TextUnformatted(("Version: " + std::string(plugin_version)).c_str());
+    ImGui::Separator();
     ImGui::TextUnformatted("This plugin dosen't require any settings");
     ImGui::TextUnformatted(("Configured serveur : " + std::string(API_ENDPOINT)).c_str());
     if (pluginLoaded){
         // Texte en vert
-        ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), "Plugin chargé avec succès !");
+        ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), "Plugin chargï¿½ avec succï¿½s !");
     }
     else {
         // Texte en rouge

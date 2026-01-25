@@ -36,18 +36,19 @@ class RocketMax: public BakkesMod::Plugin::BakkesModPlugin
 	
 
 	// Usefull fonctions
-	
+
 	int getMmrData(int gamemode);
 	int getCurentPlaylist();
 	bool isRankedGame();
 	bool sendMmrUpdate(long long timestamp);
 	bool sendHistoriqueGame(long long timestamp);
+	void collectMatchStats();
 
 
 
 	// vars
-	//#define API_ENDPOINT "http://localhost:5000"
-	#define API_ENDPOINT "https://rocketmax.tellebma.fr"
+	//#define API_ENDPOINT "http://localhost:8080"
+	#define API_ENDPOINT "http://localhost:8080"
 
 	// Vars used by prgm
 	bool pluginLoaded = false;
@@ -62,6 +63,20 @@ class RocketMax: public BakkesMod::Plugin::BakkesModPlugin
 	int mmr_gagne = 0;
 	int playlistId = 100;
 	bool victory = false;
+
+	// Stats individuelles du match
+	int match_goals = 0;
+	int match_assists = 0;
+	int match_saves = 0;
+	int match_shots = 0;
+	int match_score = 0;
+	int match_demos = 0;
+	bool match_mvp = false;
+
+	// Stats de l'équipe
+	int team_score = 0;
+	int opponent_score = 0;
+	bool overtime = false;
 
 	std::unique_ptr<MMRNotifierToken> notifierToken;
 

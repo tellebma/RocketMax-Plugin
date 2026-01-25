@@ -12,8 +12,57 @@ env:
   BUILD_PLATFORM: x64
 
 jobs:
+  # First job: determine the next version using semantic-release dry-run
+  determine-version:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    outputs:
+      version: ${{ steps.get-version.outputs.version }}
+      should_release: ${{ steps.get-version.outputs.should_release }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install semantic-release
+        run: |
+          npm install -g semantic-release \
+            @semantic-release/commit-analyzer \
+            @semantic-release/release-notes-generator \
+            @semantic-release/github \
+            conventional-changelog-conventionalcommits
+
+      - name: Get next version
+        id: get-version
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          OUTPUT=$(npx semantic-release --dry-run 2>&1) || true
+          echo "$OUTPUT"
+
+          # Look for "next release version is X.X.X"
+          VERSION=$(echo "$OUTPUT" | grep -oP 'next release version is \K[0-9]+\.[0-9]+\.[0-9]+' || echo "")
+          if [ -n "$VERSION" ]; then
+            echo "version=$VERSION" >> $GITHUB_OUTPUT
+            echo "should_release=true" >> $GITHUB_OUTPUT
+            echo "Next version will be: $VERSION"
+          else
+            # No new release needed, use current version from version.h
+            echo "should_release=false" >> $GITHUB_OUTPUT
+            echo "No new release needed"
+          fi
+
   build:
     runs-on: windows-latest
+    needs: [determine-version]
+    if: always() && (needs.determine-version.result == 'success' || needs.determine-version.result == 'skipped')
     outputs:
       version: ${{ steps.version.outputs.version }}
 
@@ -22,6 +71,30 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+
+      - name: Update version.h with new version
+        if: needs.determine-version.outputs.should_release == 'true'
+        run: |
+          $newVersion = "${{ needs.determine-version.outputs.version }}"
+          Write-Host "Updating version.h to $newVersion"
+
+          $parts = $newVersion -split '\.'
+          $major = $parts[0]
+          $minor = $parts[1]
+          $patch = $parts[2]
+
+          $versionFile = "RocketMax/version.h"
+          $content = Get-Content $versionFile -Raw
+
+          $content = $content -replace '#define VERSION_MAJOR \d+', "#define VERSION_MAJOR $major"
+          $content = $content -replace '#define VERSION_MINOR \d+', "#define VERSION_MINOR $minor"
+          $content = $content -replace '#define VERSION_PATCH \d+', "#define VERSION_PATCH $patch"
+
+          $content | Set-Content $versionFile -NoNewline
+
+          Write-Host "Updated version.h:"
+          Get-Content $versionFile
+        shell: pwsh
 
       - name: Setup MSBuild
         uses: microsoft/setup-msbuild@v2
@@ -87,7 +160,7 @@ jobs:
           $patch = [regex]::Match($versionFile, 'VERSION_PATCH\s+(\d+)').Groups[1].Value
           $version = "v$major.$minor.$patch"
           echo "version=$version" >> $env:GITHUB_OUTPUT
-          Write-Host "Detected version: $version"
+          Write-Host "Built version: $version"
         shell: pwsh
 
       - name: Prepare release files
@@ -106,9 +179,9 @@ jobs:
           if-no-files-found: error
 
   release:
-    needs: build
+    needs: [determine-version, build]
     runs-on: ubuntu-latest
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.determine-version.outputs.should_release == 'true'
 
     permissions:
       contents: write

@@ -14,6 +14,8 @@ env:
 jobs:
   build:
     runs-on: windows-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
 
     steps:
       - name: Checkout repository
@@ -76,6 +78,18 @@ jobs:
           msbuild ${{ env.SOLUTION_FILE }} /p:Configuration=${{ env.BUILD_CONFIGURATION }} /p:Platform=${{ env.BUILD_PLATFORM }} /m
         shell: pwsh
 
+      - name: Extract version
+        id: version
+        run: |
+          $versionFile = Get-Content "RocketMax/version.h" -Raw
+          $major = [regex]::Match($versionFile, 'VERSION_MAJOR\s+(\d+)').Groups[1].Value
+          $minor = [regex]::Match($versionFile, 'VERSION_MINOR\s+(\d+)').Groups[1].Value
+          $patch = [regex]::Match($versionFile, 'VERSION_PATCH\s+(\d+)').Groups[1].Value
+          $version = "v$major.$minor.$patch"
+          echo "version=$version" >> $env:GITHUB_OUTPUT
+          Write-Host "Detected version: $version"
+        shell: pwsh
+
       - name: Prepare release files
         run: |
           New-Item -ItemType Directory -Path "release" -Force
@@ -87,7 +101,7 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: RocketMax-Plugin
+          name: RocketMax-Plugin-${{ steps.version.outputs.version }}
           path: release/
           if-no-files-found: error
 
@@ -110,7 +124,7 @@ jobs:
       - name: Download artifact
         uses: actions/download-artifact@v4
         with:
-          name: RocketMax-Plugin
+          name: RocketMax-Plugin-${{ needs.build.outputs.version }}
           path: release/
 
       - name: Setup Node.js

@@ -1,0 +1,42 @@
+{
+  "branches": ["main"],
+  "plugins": [
+    ["@semantic-release/commit-analyzer", {
+      "preset": "conventionalcommits",
+      "releaseRules": [
+        {"type": "feat", "release": "minor"},
+        {"type": "fix", "release": "patch"},
+        {"type": "perf", "release": "patch"},
+        {"type": "refactor", "release": "patch"},
+        {"type": "docs", "release": false},
+        {"type": "style", "release": false},
+        {"type": "chore", "release": false},
+        {"breaking": true, "release": "major"}
+      ]
+    }],
+    ["@semantic-release/release-notes-generator", {
+      "preset": "conventionalcommits",
+      "presetConfig": {
+        "types": [
+          {"type": "feat", "section": "Nouvelles fonctionnalites"},
+          {"type": "fix", "section": "Corrections de bugs"},
+          {"type": "perf", "section": "Ameliorations de performance"},
+          {"type": "refactor", "section": "Refactoring"},
+          {"type": "docs", "section": "Documentation", "hidden": true},
+          {"type": "style", "section": "Style", "hidden": true},
+          {"type": "chore", "section": "Maintenance", "hidden": true}
+        ]
+      }
+    }],
+    ["@semantic-release/github", {
+      "assets": [
+        {"path": "release/RocketMax.dll", "label": "RocketMax.dll (Plugin BakkesMod)"},
+        {"path": "release/install-rocketmax.ps1", "label": "install-rocketmax.ps1 (Script PowerShell)"},
+        {"path": "release/Install-RocketMax.bat", "label": "Install-RocketMax.bat (Double-clic)"}
+      ],
+      "successComment": false,
+      "failComment": false,
+      "addReleases": "bottom"
+    }]
+  ]
+}

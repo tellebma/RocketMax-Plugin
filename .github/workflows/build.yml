@@ -20,6 +20,9 @@ jobs:
       version: ${{ steps.get-version.outputs.version }}
       should_release: ${{ steps.get-version.outputs.should_release }}
 
+    permissions:
+      contents: write
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4

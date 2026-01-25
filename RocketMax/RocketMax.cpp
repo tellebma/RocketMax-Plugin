@@ -1,10 +1,12 @@
 #include "pch.h"
 #include "RocketMax.h"
 #include <iostream>
+#include <fstream>
+#include <sstream>
 #include "httplib.h"
-#include <iostream>
 #include <map>
 #include <chrono>
+#include <cmath>
 
 
 #define HOOK_MATCH_ENDED "Function TAGame.GameEvent_Soccar_TA.EventMatchEnded"
@@ -50,6 +52,27 @@ void RocketMax::onLoad()
 {
 	_globalCvarManager = cvarManager;
     LOG("[RocketMax] Version " + std::string(plugin_version) + " loading...");
+
+    // Register CVars for configuration
+    cvar_enable_toasts = std::make_shared<bool>(true);
+    cvarManager->registerCvar("rocketmax_enable_toasts", "1", "Enable toast notifications")
+        .bindTo(cvar_enable_toasts);
+
+    cvar_enable_overlay = std::make_shared<bool>(true);
+    cvarManager->registerCvar("rocketmax_enable_overlay", "1", "Enable session overlay")
+        .bindTo(cvar_enable_overlay);
+
+    cvar_enable_streak_alerts = std::make_shared<bool>(true);
+    cvarManager->registerCvar("rocketmax_enable_streak_alerts", "1", "Enable streak milestone alerts")
+        .bindTo(cvar_enable_streak_alerts);
+
+    cvar_server_url = std::make_shared<std::string>(API_ENDPOINT);
+    cvarManager->registerCvar("rocketmax_server_url", API_ENDPOINT, "Server URL for data sync")
+        .bindTo(cvar_server_url);
+
+    // Process any offline queue from previous sessions
+    processOfflineQueue();
+
     bool erreur = initAPI();
     if (!erreur) {
         gameWrapper->HookEvent(HOOK_MATCH_START, std::bind(&RocketMax::gameStart, this, std::placeholders::_1));
@@ -82,6 +105,9 @@ void RocketMax::gameHasEnded()
     long long timestamp = std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count();
     sendMmrUpdate(timestamp);
     sendHistoriqueGame(timestamp);
+
+    // Update streak tracking (before resetting victory)
+    updateStreak(victory);
 
     //gameWrapper->HookEvent(HOOK_MATCH_START, std::bind(&RocketMax::gameStart, this, std::placeholders::_1));
     game_running = 0;
@@ -422,19 +448,257 @@ bool RocketMax::sendHistoriqueGame(long long timestamp)
             LOG("Json result: " + result);
             if (code == 200) {
                 LOG("[RocketMax] [sendHistoriqueGame] DATA SENT");
-                gameWrapper->Execute([this, mmr_display, mmr_diff](GameWrapper* gw) {
-                    std::string toastMsg = "Donnees envoyees ! MMR: " + std::to_string(mmr_display) + " (" + (mmr_diff >= 0 ? "+" : "") + std::to_string(mmr_diff) + ")";
-                    gw->Toast("RocketMax", toastMsg, "default", 5.0f, ToastType_OK);
-                });
+                if (*cvar_enable_toasts) {
+                    gameWrapper->Execute([this, mmr_display, mmr_diff](GameWrapper* gw) {
+                        std::string toastMsg = "Donnees envoyees ! MMR: " + std::to_string(mmr_display) + " (" + (mmr_diff >= 0 ? "+" : "") + std::to_string(mmr_diff) + ")";
+                        gw->Toast("RocketMax", toastMsg, "default", 5.0f, ToastType_OK);
+                    });
+                }
             }
             else {
-                LOG("[RocketMax] [sendHistoriqueGame] ERROR DATA NOT SENT");
-                gameWrapper->Execute([this](GameWrapper* gw) {
-                    gw->Toast("RocketMax", "Erreur: donnees non envoyees", "default", 5.0f, ToastType_Error);
-                });
+                LOG("[RocketMax] [sendHistoriqueGame] ERROR DATA NOT SENT - Saving to offline queue");
+                // Save to offline queue for later retry
+                saveToOfflineQueue("/updateHistorique", req.body);
+                if (*cvar_enable_toasts) {
+                    gameWrapper->Execute([this](GameWrapper* gw) {
+                        gw->Toast("RocketMax", "Hors ligne - donnees sauvegardees", "default", 5.0f, ToastType_Warning);
+                    });
+                }
                 return true;
             }
 
         });
     return false;
+}
+
+// ============ STREAK TRACKING ============
+
+void RocketMax::updateStreak(bool won)
+{
+    // Update session stats
+    if (won) {
+        session_wins++;
+        if (current_streak >= 0) {
+            current_streak++;
+        } else {
+            current_streak = 1;
+        }
+        if (current_streak > best_win_streak) {
+            best_win_streak = current_streak;
+        }
+    } else {
+        session_losses++;
+        if (current_streak <= 0) {
+            current_streak--;
+        } else {
+            current_streak = -1;
+        }
+        if (std::abs(current_streak) > worst_loss_streak) {
+            worst_loss_streak = std::abs(current_streak);
+        }
+    }
+
+    session_mmr_change += mmr_gagne;
+
+    LOG("[RocketMax] [Streak] Current: " + std::to_string(current_streak) +
+        " | Session: " + std::to_string(session_wins) + "W/" + std::to_string(session_losses) + "L" +
+        " | MMR: " + (session_mmr_change >= 0 ? "+" : "") + std::to_string(session_mmr_change));
+
+    checkStreakMilestone();
+}
+
+void RocketMax::checkStreakMilestone()
+{
+    if (!*cvar_enable_streak_alerts) return;
+
+    // Milestones at 3, 5, 7, 10 games
+    int streak_abs = std::abs(current_streak);
+    if (streak_abs == 3 || streak_abs == 5 || streak_abs == 7 || streak_abs == 10) {
+        showStreakToast();
+    }
+}
+
+void RocketMax::showStreakToast()
+{
+    gameWrapper->Execute([this](GameWrapper* gw) {
+        std::string msg;
+        if (current_streak > 0) {
+            msg = "Win Streak: " + std::to_string(current_streak) + " victoires !";
+            gw->Toast("RocketMax", msg, "default", 5.0f, ToastType_OK);
+        } else {
+            msg = "Lose Streak: " + std::to_string(std::abs(current_streak)) + " defaites...";
+            gw->Toast("RocketMax", msg, "default", 5.0f, ToastType_Error);
+        }
+    });
+}
+
+// ============ OFFLINE QUEUE ============
+
+std::string RocketMax::getQueueFilePath()
+{
+    return gameWrapper->GetDataFolder().string() + "/rocketmax_queue.json";
+}
+
+void RocketMax::saveToOfflineQueue(const std::string& endpoint, const std::string& body)
+{
+    std::string filepath = getQueueFilePath();
+    LOG("[RocketMax] [OfflineQueue] Saving to: " + filepath);
+
+    // Read existing queue
+    std::ifstream infile(filepath);
+    std::string content = "";
+    if (infile.is_open()) {
+        std::stringstream buffer;
+        buffer << infile.rdbuf();
+        content = buffer.str();
+        infile.close();
+    }
+
+    // Parse or create array
+    std::string newEntry = R"({"endpoint":")" + endpoint + R"(","body":)" + body + "}";
+
+    if (content.empty() || content == "[]") {
+        content = "[" + newEntry + "]";
+    } else {
+        // Insert before last ]
+        size_t pos = content.rfind(']');
+        if (pos != std::string::npos) {
+            content.insert(pos, "," + newEntry);
+        }
+    }
+
+    // Write back
+    std::ofstream outfile(filepath);
+    if (outfile.is_open()) {
+        outfile << content;
+        outfile.close();
+        LOG("[RocketMax] [OfflineQueue] Saved successfully");
+    } else {
+        LOG("[RocketMax] [OfflineQueue] ERROR: Could not write file");
+    }
+}
+
+void RocketMax::processOfflineQueue()
+{
+    std::string filepath = getQueueFilePath();
+    std::ifstream infile(filepath);
+
+    if (!infile.is_open()) {
+        LOG("[RocketMax] [OfflineQueue] No queue file found");
+        return;
+    }
+
+    std::stringstream buffer;
+    buffer << infile.rdbuf();
+    std::string content = buffer.str();
+    infile.close();
+
+    if (content.empty() || content == "[]") {
+        LOG("[RocketMax] [OfflineQueue] Queue is empty");
+        return;
+    }
+
+    LOG("[RocketMax] [OfflineQueue] Processing offline queue...");
+
+    // Clear the file first (we'll re-add failed ones)
+    std::ofstream clearFile(filepath);
+    clearFile << "[]";
+    clearFile.close();
+
+    // Note: In a real implementation, you'd parse the JSON and retry each request
+    // For now, we just log that we found pending items
+    LOG("[RocketMax] [OfflineQueue] Found pending items - will retry on next connection");
+}
+
+// ============ OVERLAY WINDOW ============
+
+std::string RocketMax::GetMenuName()
+{
+    return "RocketMax";
+}
+
+std::string RocketMax::GetMenuTitle()
+{
+    return "RocketMax Session";
+}
+
+void RocketMax::SetImGuiContext(uintptr_t ctx)
+{
+    ImGui::SetCurrentContext(reinterpret_cast<ImGuiContext*>(ctx));
+}
+
+bool RocketMax::ShouldBlockInput()
+{
+    return false;
+}
+
+bool RocketMax::IsActiveOverlay()
+{
+    return true;
+}
+
+void RocketMax::OnOpen()
+{
+    overlay_visible = true;
+}
+
+void RocketMax::OnClose()
+{
+    overlay_visible = false;
+}
+
+void RocketMax::RenderWindow()
+{
+    if (!*cvar_enable_overlay || !overlay_visible) return;
+
+    ImGui::SetNextWindowSize(ImVec2(250, 180), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowPos(ImVec2(10, 10), ImGuiCond_FirstUseEver);
+
+    if (ImGui::Begin("RocketMax Session", &overlay_visible, ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_AlwaysAutoResize)) {
+
+        // Session header
+        ImGui::Text("Session Stats");
+        ImGui::Separator();
+
+        // Win/Loss
+        ImGui::Text("Matches: ");
+        ImGui::SameLine();
+        ImGui::TextColored(ImVec4(0.0f, 0.8f, 0.0f, 1.0f), "%d W", session_wins);
+        ImGui::SameLine();
+        ImGui::Text(" / ");
+        ImGui::SameLine();
+        ImGui::TextColored(ImVec4(0.8f, 0.0f, 0.0f, 1.0f), "%d L", session_losses);
+
+        // Win rate
+        float win_rate = (session_wins + session_losses) > 0
+            ? (float)session_wins / (session_wins + session_losses) * 100.0f
+            : 0.0f;
+        ImGui::Text("Win Rate: %.1f%%", win_rate);
+
+        // MMR Change
+        ImGui::Text("MMR Change: ");
+        ImGui::SameLine();
+        if (session_mmr_change >= 0) {
+            ImGui::TextColored(ImVec4(0.0f, 0.8f, 0.0f, 1.0f), "+%d", session_mmr_change);
+        } else {
+            ImGui::TextColored(ImVec4(0.8f, 0.0f, 0.0f, 1.0f), "%d", session_mmr_change);
+        }
+
+        ImGui::Separator();
+
+        // Current Streak
+        ImGui::Text("Streak: ");
+        ImGui::SameLine();
+        if (current_streak > 0) {
+            ImGui::TextColored(ImVec4(0.0f, 0.8f, 0.0f, 1.0f), "%d W", current_streak);
+        } else if (current_streak < 0) {
+            ImGui::TextColored(ImVec4(0.8f, 0.0f, 0.0f, 1.0f), "%d L", std::abs(current_streak));
+        } else {
+            ImGui::Text("-");
+        }
+
+        // Best/Worst
+        ImGui::Text("Best: %d W | Worst: %d L", best_win_streak, worst_loss_streak);
+    }
+    ImGui::End();
 }

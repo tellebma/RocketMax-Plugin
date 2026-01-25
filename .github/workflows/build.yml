@@ -2,7 +2,7 @@ name: Build & Release Plugin
 
 on:
   push:
-    branches: [main, claude/fix-ci-pipeline-NklG4]
+    branches: [main]
   pull_request:
     branches: [main]
 

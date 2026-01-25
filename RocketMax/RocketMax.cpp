@@ -822,7 +822,7 @@ void RocketMax::launchUpdateScript()
 
     scriptFile << "$downloadUrl = '" << update_download_url << "'\n";
     scriptFile << "$pluginPath = '" << pluginPath.string() << "'\n";
-    scriptFile << "$tempPath = '" << (pluginsFolder / "RocketMax_new.dll").string() << "'\n";
+    scriptFile << "$tempPath = '" << (pluginsFolder / ("RocketMax_" + latest_version + ".dll")).string() << "'\n";
     scriptFile << "$backupPath = '" << (pluginsFolder / "RocketMax_backup.dll").string() << "'\n\n";
 
     scriptFile << "Write-Host 'RocketMax Update Script' -ForegroundColor Cyan\n";

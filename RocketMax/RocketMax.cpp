@@ -442,8 +442,9 @@ bool RocketMax::sendHistoriqueGame(long long timestamp)
     // Capturer les valeurs pour le toast (car elles peuvent changer avant l'execute)
     int mmr_display = mmr_apres_match;
     int mmr_diff = mmr_gagne;
+    std::string requestBody = req.body;  // Capture body before lambda
 
-    HttpWrapper::SendCurlJsonRequest(req, [this, mmr_display, mmr_diff](int code, std::string result)
+    HttpWrapper::SendCurlJsonRequest(req, [this, mmr_display, mmr_diff, requestBody](int code, std::string result)
         {
             LOG("Json result: " + result);
             if (code == 200) {
@@ -458,7 +459,7 @@ bool RocketMax::sendHistoriqueGame(long long timestamp)
             else {
                 LOG("[RocketMax] [sendHistoriqueGame] ERROR DATA NOT SENT - Saving to offline queue");
                 // Save to offline queue for later retry
-                saveToOfflineQueue("/updateHistorique", req.body);
+                saveToOfflineQueue("/updateHistorique", requestBody);
                 if (*cvar_enable_toasts) {
                     gameWrapper->Execute([this](GameWrapper* gw) {
                         gw->Toast("RocketMax", "Hors ligne - donnees sauvegardees", "default", 5.0f, ToastType_Warning);

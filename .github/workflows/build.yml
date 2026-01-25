@@ -47,8 +47,8 @@ jobs:
           OUTPUT=$(npx semantic-release --dry-run 2>&1) || true
           echo "$OUTPUT"
 
-          # Look for "next release version is X.X.X"
-          VERSION=$(echo "$OUTPUT" | grep -oP 'next release version is \K[0-9]+\.[0-9]+\.[0-9]+' || echo "")
+          # Look for "The next release version is X.X.X" (case insensitive)
+          VERSION=$(echo "$OUTPUT" | grep -oiP 'The next release version is \K[0-9]+\.[0-9]+\.[0-9]+' || echo "")
           if [ -n "$VERSION" ]; then
             echo "version=$VERSION" >> $GITHUB_OUTPUT
             echo "should_release=true" >> $GITHUB_OUTPUT

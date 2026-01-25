@@ -830,6 +830,8 @@ void RocketMax::launchUpdateScript()
     scriptFile << "Write-Host ''\n\n";
 
     scriptFile << "try {\n";
+    scriptFile << "    # Remove temp file if it exists from a previous attempt\n";
+    scriptFile << "    if (Test-Path $tempPath) { Remove-Item $tempPath -Force }\n\n";
     scriptFile << "    Write-Host 'Downloading new version...' -ForegroundColor Yellow\n";
     scriptFile << "    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12\n";
     scriptFile << "    Invoke-WebRequest -Uri $downloadUrl -OutFile $tempPath -UseBasicParsing\n\n";

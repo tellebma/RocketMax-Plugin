@@ -6,6 +6,8 @@
 #include "bakkesmod/plugin/PluginSettingsWindow.h"
 
 #include "version.h"
+#include <atomic>
+#include <filesystem>
 
 constexpr auto plugin_version = stringify(VERSION_MAJOR) "." stringify(VERSION_MINOR) "." stringify(VERSION_PATCH) "." stringify(VERSION_BUILD);
 
@@ -48,20 +50,17 @@ class RocketMax: public BakkesMod::Plugin::BakkesModPlugin
 
 	// Auto-update
 	void checkForUpdates();
-	void downloadUpdate();
+	void launchUpdateScript();
 	bool parseVersionString(const std::string& version, int& major, int& minor, int& patch);
 	bool isNewerVersion(const std::string& remoteVersion);
-	std::string getPluginPath();
-	std::string getUpdateFilePath();
-
-
+	std::filesystem::path getPluginsFolder();
+	std::filesystem::path getUpdateScriptPath();
+	std::string extractJsonValue(const std::string& json, const std::string& key);
 
 	// vars
 	//#define API_ENDPOINT "http://localhost:8080"
 	#define API_ENDPOINT "http://localhost:8080"
 	#define GITHUB_API_RELEASES "https://api.github.com/repos/tellebma/RocketMax-Plugin/releases/latest"
-	#define GITHUB_REPO_OWNER "tellebma"
-	#define GITHUB_REPO_NAME "RocketMax-Plugin"
 
 	// Vars used by prgm
 	bool pluginLoaded = false;
@@ -106,11 +105,10 @@ class RocketMax: public BakkesMod::Plugin::BakkesModPlugin
 	std::shared_ptr<bool> cvar_enable_auto_update;
 	std::shared_ptr<std::string> cvar_server_url;
 
-	// Auto-update state
-	bool update_available = false;
-	bool update_checking = false;
-	bool update_downloading = false;
-	bool update_ready = false;
+	// Auto-update state (atomic for thread safety with async callbacks)
+	std::atomic<bool> update_available{false};
+	std::atomic<bool> update_checking{false};
+	std::atomic<bool> update_ready{false};
 	std::string latest_version = "";
 	std::string update_download_url = "";
 	std::string update_error = "";

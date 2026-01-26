@@ -7,6 +7,10 @@
 #include <map>
 #include <chrono>
 #include <cmath>
+#include <iomanip>
+#include <wincrypt.h>
+#pragma comment(lib, "Crypt32.lib")
+#pragma comment(lib, "Advapi32.lib")
 
 
 #define HOOK_MATCH_ENDED "Function TAGame.GameEvent_Soccar_TA.EventMatchEnded"
@@ -73,6 +77,23 @@ void RocketMax::onLoad()
     cvar_enable_auto_update = std::make_shared<bool>(true);
     cvarManager->registerCvar("rocketmax_enable_auto_update", "1", "Enable automatic update checking")
         .bindTo(cvar_enable_auto_update);
+
+    // Authentication & Privacy CVars (persistent)
+    cvar_auth_secret = std::make_shared<std::string>("");
+    cvarManager->registerCvar("rocketmax_auth_secret", "", "Authentication secret (do not share!)", true, false, 0, false, 0, false)
+        .bindTo(cvar_auth_secret);
+
+    cvar_hide_profile = std::make_shared<bool>(false);
+    cvarManager->registerCvar("rocketmax_hide_profile", "0", "Hide profile from public listing")
+        .bindTo(cvar_hide_profile);
+
+    cvar_access_token = std::make_shared<std::string>("");
+    cvarManager->registerCvar("rocketmax_access_token", "", "Access token for private profile link", true, false, 0, false, 0, false)
+        .bindTo(cvar_access_token);
+
+    cvar_profile_url = std::make_shared<std::string>("");
+    cvarManager->registerCvar("rocketmax_profile_url", "", "Private profile URL", true, false, 0, false, 0, false)
+        .bindTo(cvar_profile_url);
 
     // Process any offline queue from previous sessions
     processOfflineQueue();
@@ -284,33 +305,33 @@ bool RocketMax::sendMmrUpdate(long long timestamp)
     LOG("[RocketMax] [sendMmrUpdate]  Gamemode NAME :" + gameModes[playlistId]);
     LOG("[RocketMax] [sendMmrUpdate]  MMR           :" + std::to_string(mmr_apres_match));
 
-    CurlRequest req;
-    req.url = std::string(API_ENDPOINT) + "/updateMmr";
-    req.body = R"({"player_id": ")" + playerId +
+    std::string body = R"({"player_id": ")" + playerId +
         R"(", "timestamp": ")" + std::to_string(timestamp) +
         R"(", "mmr": )" + std::to_string(mmr_apres_match) +
         R"(, "gamemode_id": )" + std::to_string(playlistId) +
         R"(})";
-    
-    
-    HttpWrapper::SendCurlJsonRequest(req, [this](int code, std::string result)
+
+    sendAuthenticatedRequest("/updateMmr", body, [this](int code, std::string result)
     {
         LOG("Json result: " + result);
         if (code == 200) {
             LOG("[RocketMax] [sendMmrUpdate] DATA SENT");
         }
+        else if (code == 401) {
+            LOG("[RocketMax] [sendMmrUpdate] AUTHENTICATION FAILED");
+        }
         else {
             LOG("[RocketMax] [sendMmrUpdate] ERROR DATA NOT SENT");
             return true;
         }
-       
+
     });
     return false;
 }
 
 bool RocketMax::initAPI()
 {
-    // Obtenez l'identifiant unique du joueur sous forme de cha�ne
+    // Obtenez l'identifiant unique du joueur sous forme de chaine
     playerIdWrapper = gameWrapper->GetUniqueID();
     playerId = std::to_string(playerIdWrapper.GetUID());
     // Obtenez le nom du joueur
@@ -330,6 +351,28 @@ bool RocketMax::initAPI()
             LOG("Json result: " + result);
             if (code == 200) {
                 LOG("[RocketMax] [InitAPI] DATA SENT");
+
+                // Extract and store auth_secret from response
+                std::string authSecret = extractJsonValue(result, "auth_secret");
+                if (!authSecret.empty()) {
+                    LOG("[RocketMax] [InitAPI] Received auth_secret");
+                    cvarManager->getCvar("rocketmax_auth_secret").setValue(authSecret);
+                }
+
+                // Extract visibility state
+                std::string isHiddenStr = extractJsonValue(result, "is_hidden");
+                bool isHidden = (isHiddenStr == "true");
+                cvarManager->getCvar("rocketmax_hide_profile").setValue(isHidden ? "1" : "0");
+
+                // Extract access_token if profile is hidden
+                std::string accessToken = extractJsonValue(result, "access_token");
+                if (!accessToken.empty()) {
+                    cvarManager->getCvar("rocketmax_access_token").setValue(accessToken);
+                    std::string profileUrl = std::string(API_ENDPOINT) + "/p/" + accessToken;
+                    cvarManager->getCvar("rocketmax_profile_url").setValue(profileUrl);
+                    LOG("[RocketMax] [InitAPI] Profile is hidden, URL: " + profileUrl);
+                }
+
                 gameWrapper->Execute([this](GameWrapper* gw) {
                     std::string toastMsg = "Plugin v" + std::string(plugin_version) + " connecte et pret !";
                     gw->Toast("RocketMax", toastMsg, "default", 5.0f, ToastType_OK);
@@ -427,9 +470,7 @@ bool RocketMax::sendHistoriqueGame(long long timestamp)
     LOG("[RocketMax] [sendHistoriqueGame]  victory ?     :" + std::to_string(victory));
     LOG("[RocketMax] [sendHistoriqueGame]  timestamp     :" + std::to_string(timestamp));
 
-    CurlRequest req;
-    req.url = std::string(API_ENDPOINT) + "/updateHistorique";
-    req.body = R"({"player_id": ")" + playerId +
+    std::string requestBody = R"({"player_id": ")" + playerId +
         R"(", "timestamp": ")" + std::to_string(timestamp) +
         R"(", "victory": )" + std::to_string(victory) +
         R"(, "mmr_won": )" + std::to_string(mmr_gagne) +
@@ -451,9 +492,8 @@ bool RocketMax::sendHistoriqueGame(long long timestamp)
     // Capturer les valeurs pour le toast (car elles peuvent changer avant l'execute)
     int mmr_display = mmr_apres_match;
     int mmr_diff = mmr_gagne;
-    std::string requestBody = req.body;  // Capture body before lambda
 
-    HttpWrapper::SendCurlJsonRequest(req, [this, mmr_display, mmr_diff, requestBody](int code, std::string result)
+    sendAuthenticatedRequest("/updateHistorique", requestBody, [this, mmr_display, mmr_diff, requestBody](int code, std::string result)
         {
             LOG("Json result: " + result);
             if (code == 200) {
@@ -462,6 +502,14 @@ bool RocketMax::sendHistoriqueGame(long long timestamp)
                     gameWrapper->Execute([this, mmr_display, mmr_diff](GameWrapper* gw) {
                         std::string toastMsg = "Donnees envoyees ! MMR: " + std::to_string(mmr_display) + " (" + (mmr_diff >= 0 ? "+" : "") + std::to_string(mmr_diff) + ")";
                         gw->Toast("RocketMax", toastMsg, "default", 5.0f, ToastType_OK);
+                    });
+                }
+            }
+            else if (code == 401) {
+                LOG("[RocketMax] [sendHistoriqueGame] AUTHENTICATION FAILED");
+                if (*cvar_enable_toasts) {
+                    gameWrapper->Execute([this](GameWrapper* gw) {
+                        gw->Toast("RocketMax", "Erreur d'authentification", "default", 5.0f, ToastType_Error);
                     });
                 }
             }
@@ -899,6 +947,232 @@ void RocketMax::launchUpdateScript()
     gameWrapper->Execute([this](GameWrapper* gw) {
         gw->Toast("RocketMax Update", "Script de mise a jour lance!", "default", 5.0f, ToastType_OK);
     });
+}
+
+// ============ AUTHENTICATION & PRIVACY ============
+
+std::string RocketMax::computeHmacSha256(const std::string& data, const std::string& key)
+{
+    HCRYPTPROV hProv = 0;
+    HCRYPTHASH hHash = 0;
+    HCRYPTKEY hKey = 0;
+    BYTE* pbHash = nullptr;
+    DWORD dwHashLen = 32; // SHA256 = 32 bytes
+    std::string result;
+
+    // Structure for importing the key
+    struct {
+        BLOBHEADER hdr;
+        DWORD keySize;
+        BYTE key[256];
+    } keyBlob;
+
+    if (!CryptAcquireContext(&hProv, NULL, NULL, PROV_RSA_AES, CRYPT_VERIFYCONTEXT)) {
+        LOG("[RocketMax] [HMAC] CryptAcquireContext failed");
+        return "";
+    }
+
+    // Setup key blob
+    keyBlob.hdr.bType = PLAINTEXTKEYBLOB;
+    keyBlob.hdr.bVersion = CUR_BLOB_VERSION;
+    keyBlob.hdr.reserved = 0;
+    keyBlob.hdr.aiKeyAlg = CALG_RC2; // Placeholder, will be used for HMAC
+    keyBlob.keySize = static_cast<DWORD>(key.length());
+    memcpy(keyBlob.key, key.c_str(), key.length());
+
+    // Import the key
+    if (!CryptImportKey(hProv, (BYTE*)&keyBlob, sizeof(BLOBHEADER) + sizeof(DWORD) + key.length(), 0, CRYPT_IPSEC_HMAC_KEY, &hKey)) {
+        LOG("[RocketMax] [HMAC] CryptImportKey failed");
+        CryptReleaseContext(hProv, 0);
+        return "";
+    }
+
+    // Create HMAC hash
+    if (!CryptCreateHash(hProv, CALG_HMAC, hKey, 0, &hHash)) {
+        LOG("[RocketMax] [HMAC] CryptCreateHash failed");
+        CryptDestroyKey(hKey);
+        CryptReleaseContext(hProv, 0);
+        return "";
+    }
+
+    // Set HMAC info to use SHA256
+    HMAC_INFO hmacInfo;
+    ZeroMemory(&hmacInfo, sizeof(hmacInfo));
+    hmacInfo.HashAlgid = CALG_SHA_256;
+
+    if (!CryptSetHashParam(hHash, HP_HMAC_INFO, (BYTE*)&hmacInfo, 0)) {
+        LOG("[RocketMax] [HMAC] CryptSetHashParam failed");
+        CryptDestroyHash(hHash);
+        CryptDestroyKey(hKey);
+        CryptReleaseContext(hProv, 0);
+        return "";
+    }
+
+    // Hash the data
+    if (!CryptHashData(hHash, (BYTE*)data.c_str(), static_cast<DWORD>(data.length()), 0)) {
+        LOG("[RocketMax] [HMAC] CryptHashData failed");
+        CryptDestroyHash(hHash);
+        CryptDestroyKey(hKey);
+        CryptReleaseContext(hProv, 0);
+        return "";
+    }
+
+    // Get the hash value
+    pbHash = new BYTE[dwHashLen];
+    if (!CryptGetHashParam(hHash, HP_HASHVAL, pbHash, &dwHashLen, 0)) {
+        LOG("[RocketMax] [HMAC] CryptGetHashParam failed");
+        delete[] pbHash;
+        CryptDestroyHash(hHash);
+        CryptDestroyKey(hKey);
+        CryptReleaseContext(hProv, 0);
+        return "";
+    }
+
+    // Convert to hex string
+    std::stringstream ss;
+    for (DWORD i = 0; i < dwHashLen; i++) {
+        ss << std::hex << std::setfill('0') << std::setw(2) << (int)pbHash[i];
+    }
+    result = ss.str();
+
+    // Cleanup
+    delete[] pbHash;
+    CryptDestroyHash(hHash);
+    CryptDestroyKey(hKey);
+    CryptReleaseContext(hProv, 0);
+
+    return result;
+}
+
+void RocketMax::sendAuthenticatedRequest(const std::string& endpoint, const std::string& body,
+    std::function<void(int, std::string)> callback)
+{
+    std::string authSecret = *cvar_auth_secret;
+    if (authSecret.empty()) {
+        LOG("[RocketMax] [Auth] No auth secret available, sending unauthenticated request");
+        // Fallback to unauthenticated request (for backwards compatibility during migration)
+        CurlRequest req;
+        req.url = std::string(API_ENDPOINT) + endpoint;
+        req.body = body;
+        HttpWrapper::SendCurlJsonRequest(req, callback);
+        return;
+    }
+
+    // Compute HMAC-SHA256 signature
+    std::string signature = computeHmacSha256(body, authSecret);
+    LOG("[RocketMax] [Auth] Computed signature for " + endpoint);
+
+    CurlRequest req;
+    req.url = std::string(API_ENDPOINT) + endpoint;
+    req.body = body;
+
+    // Add authentication headers
+    req.headers["X-Player-Id"] = playerId;
+    req.headers["X-Signature"] = signature;
+
+    HttpWrapper::SendCurlJsonRequest(req, callback);
+}
+
+void RocketMax::setProfileVisibility(bool hidden)
+{
+    LOG("[RocketMax] [Privacy] Setting profile visibility: " + std::string(hidden ? "hidden" : "public"));
+
+    std::string body = R"({"is_hidden": )" + std::string(hidden ? "true" : "false") + "}";
+
+    sendAuthenticatedRequest("/setVisibility", body, [this, hidden](int code, std::string result) {
+        LOG("[RocketMax] [Privacy] setVisibility response: " + result);
+
+        if (code == 200) {
+            // Update local CVars
+            cvarManager->getCvar("rocketmax_hide_profile").setValue(hidden ? "1" : "0");
+
+            // Extract access_token from response if profile is hidden
+            if (hidden) {
+                std::string token = extractJsonValue(result, "access_token");
+                if (!token.empty()) {
+                    cvarManager->getCvar("rocketmax_access_token").setValue(token);
+                    std::string profileUrl = std::string(API_ENDPOINT) + "/p/" + token;
+                    cvarManager->getCvar("rocketmax_profile_url").setValue(profileUrl);
+                    LOG("[RocketMax] [Privacy] Profile URL: " + profileUrl);
+                }
+            }
+
+            gameWrapper->Execute([this, hidden](GameWrapper* gw) {
+                if (hidden) {
+                    gw->Toast("RocketMax", "Profil masque ! Utilisez le lien prive pour y acceder.", "default", 5.0f, ToastType_OK);
+                } else {
+                    gw->Toast("RocketMax", "Profil rendu public.", "default", 5.0f, ToastType_OK);
+                }
+            });
+        }
+        else if (code == 401) {
+            LOG("[RocketMax] [Privacy] Authentication failed");
+            gameWrapper->Execute([this](GameWrapper* gw) {
+                gw->Toast("RocketMax", "Erreur d'authentification. Essayez de recharger le plugin.", "default", 5.0f, ToastType_Error);
+            });
+        }
+        else {
+            LOG("[RocketMax] [Privacy] setVisibility failed with code: " + std::to_string(code));
+            gameWrapper->Execute([this](GameWrapper* gw) {
+                gw->Toast("RocketMax", "Erreur lors du changement de visibilite.", "default", 5.0f, ToastType_Error);
+            });
+        }
+    });
+}
+
+void RocketMax::regenerateAccessToken()
+{
+    LOG("[RocketMax] [Privacy] Regenerating access token...");
+
+    sendAuthenticatedRequest("/regenerateAccessToken", "{}", [this](int code, std::string result) {
+        LOG("[RocketMax] [Privacy] regenerateAccessToken response: " + result);
+
+        if (code == 200) {
+            std::string token = extractJsonValue(result, "access_token");
+            if (!token.empty()) {
+                cvarManager->getCvar("rocketmax_access_token").setValue(token);
+                std::string profileUrl = std::string(API_ENDPOINT) + "/p/" + token;
+                cvarManager->getCvar("rocketmax_profile_url").setValue(profileUrl);
+                LOG("[RocketMax] [Privacy] New profile URL: " + profileUrl);
+            }
+
+            gameWrapper->Execute([this](GameWrapper* gw) {
+                gw->Toast("RocketMax", "Nouveau lien prive genere ! L'ancien lien ne fonctionne plus.", "default", 5.0f, ToastType_OK);
+            });
+        }
+        else {
+            LOG("[RocketMax] [Privacy] regenerateAccessToken failed");
+            gameWrapper->Execute([this](GameWrapper* gw) {
+                gw->Toast("RocketMax", "Erreur lors de la regeneration du lien.", "default", 5.0f, ToastType_Error);
+            });
+        }
+    });
+}
+
+void RocketMax::copyProfileLinkToClipboard()
+{
+    std::string url = *cvar_profile_url;
+    if (url.empty()) {
+        // If no private URL, use public URL
+        url = std::string(API_ENDPOINT) + "/user?id=" + playerId;
+    }
+
+    // Copy to clipboard using Windows API
+    if (OpenClipboard(NULL)) {
+        EmptyClipboard();
+        HGLOBAL hg = GlobalAlloc(GMEM_MOVEABLE, url.size() + 1);
+        if (hg) {
+            memcpy(GlobalLock(hg), url.c_str(), url.size() + 1);
+            GlobalUnlock(hg);
+            SetClipboardData(CF_TEXT, hg);
+        }
+        CloseClipboard();
+        LOG("[RocketMax] [Privacy] Copied profile URL to clipboard: " + url);
+
+        gameWrapper->Execute([this](GameWrapper* gw) {
+            gw->Toast("RocketMax", "Lien copie dans le presse-papiers !", "default", 3.0f, ToastType_OK);
+        });
+    }
 }
 
 // ============ OVERLAY WINDOW ============

@@ -57,6 +57,14 @@ class RocketMax: public BakkesMod::Plugin::BakkesModPlugin
 	std::filesystem::path getUpdateScriptPath();
 	std::string extractJsonValue(const std::string& json, const std::string& key);
 
+	// Authentication & Privacy
+	std::string computeHmacSha256(const std::string& data, const std::string& key);
+	void sendAuthenticatedRequest(const std::string& endpoint, const std::string& body,
+		std::function<void(int, std::string)> callback);
+	void setProfileVisibility(bool hidden);
+	void regenerateAccessToken();
+	void copyProfileLinkToClipboard();
+
 	// vars
 	//#define API_ENDPOINT "http://localhost:8080"
 	#define API_ENDPOINT "https://rocketmax.tellebma.fr"
@@ -104,6 +112,12 @@ class RocketMax: public BakkesMod::Plugin::BakkesModPlugin
 	std::shared_ptr<bool> cvar_enable_streak_alerts;
 	std::shared_ptr<bool> cvar_enable_auto_update;
 	std::shared_ptr<std::string> cvar_server_url;
+
+	// Authentication & Privacy CVars
+	std::shared_ptr<std::string> cvar_auth_secret;
+	std::shared_ptr<bool> cvar_hide_profile;
+	std::shared_ptr<std::string> cvar_access_token;
+	std::shared_ptr<std::string> cvar_profile_url;
 
 	// Auto-update state (atomic for thread safety with async callbacks)
 	std::atomic<bool> update_available{false};

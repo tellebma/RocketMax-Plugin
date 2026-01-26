@@ -8,12 +8,9 @@
 #include <chrono>
 #include <cmath>
 #include <iomanip>
-#include <thread>
 #include <wincrypt.h>
-#include <winhttp.h>
 #pragma comment(lib, "Crypt32.lib")
 #pragma comment(lib, "Advapi32.lib")
-#pragma comment(lib, "winhttp.lib")
 
 
 #define HOOK_MATCH_ENDED "Function TAGame.GameEvent_Soccar_TA.EventMatchEnded"
@@ -348,180 +345,69 @@ bool RocketMax::initAPI()
     bool needsAuthSecret = localSecret.empty();
     LOG("[RocketMax] [InitAPI] Local auth_secret exists: " + std::string(needsAuthSecret ? "NO" : "YES"));
 
-    std::string body = R"({"player_id": ")" + playerId +
+    CurlRequest req;
+    req.url = std::string(API_ENDPOINT) + "/initPlayer";
+    req.verb = "POST";
+    req.body = R"({"player_id": ")" + playerId +
         R"(", "player_name": ")" + playerName +
         R"(", "needs_auth_secret": )" + (needsAuthSecret ? "true" : "false") + R"(})";
+    req.headers["Content-Type"] = "application/json";
 
-    LOG("[RocketMax] [InitAPI] URL: " API_ENDPOINT "/initPlayer");
-    LOG("[RocketMax] [InitAPI] Body: " + body);
+    LOG("[RocketMax] [InitAPI] URL: " + req.url);
+    LOG("[RocketMax] [InitAPI] Body: " + req.body);
 
-    // Use WinHTTP directly instead of BakkesMod's HttpWrapper (which intercepts requests)
-    // Run in a separate thread to avoid blocking the game
-    std::thread([this, body]() {
-        HINTERNET hSession = NULL, hConnect = NULL, hRequest = NULL;
-        bool success = false;
-        std::string result;
-        int statusCode = 0;
+    HttpWrapper::SendCurlRequest(req, [this](int code, std::string result)
+        {
+            LOG("[RocketMax] [InitAPI] Response code: " + std::to_string(code));
+            LOG("[RocketMax] [InitAPI] Response: " + result);
 
-        try {
-            LOG("[RocketMax] [InitAPI] Creating WinHTTP session...");
+            if (code == 200) {
+                LOG("[RocketMax] [InitAPI] DATA SENT");
 
-            // Initialize WinHTTP
-            hSession = WinHttpOpen(L"RocketMax Plugin",
-                WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,
-                WINHTTP_NO_PROXY_NAME,
-                WINHTTP_NO_PROXY_BYPASS, 0);
-
-            if (!hSession) {
-                LOG("[RocketMax] [InitAPI] WinHttpOpen failed: " + std::to_string(GetLastError()));
-                throw std::runtime_error("WinHttpOpen failed");
-            }
-
-            // Connect to server
-            LOG("[RocketMax] [InitAPI] Connecting to rocketmax.tellebma.fr...");
-            hConnect = WinHttpConnect(hSession, L"rocketmax.tellebma.fr",
-                INTERNET_DEFAULT_HTTPS_PORT, 0);
-
-            if (!hConnect) {
-                LOG("[RocketMax] [InitAPI] WinHttpConnect failed: " + std::to_string(GetLastError()));
-                throw std::runtime_error("WinHttpConnect failed");
-            }
-
-            // Create request
-            LOG("[RocketMax] [InitAPI] Creating POST request...");
-            hRequest = WinHttpOpenRequest(hConnect, L"POST", L"/initPlayer",
-                NULL, WINHTTP_NO_REFERER,
-                WINHTTP_DEFAULT_ACCEPT_TYPES,
-                WINHTTP_FLAG_SECURE);
-
-            if (!hRequest) {
-                LOG("[RocketMax] [InitAPI] WinHttpOpenRequest failed: " + std::to_string(GetLastError()));
-                throw std::runtime_error("WinHttpOpenRequest failed");
-            }
-
-            // Set headers
-            LPCWSTR headers = L"Content-Type: application/json\r\n";
-
-            // Send request
-            LOG("[RocketMax] [InitAPI] Sending request...");
-            BOOL bResults = WinHttpSendRequest(hRequest,
-                headers, -1,
-                (LPVOID)body.c_str(), (DWORD)body.length(),
-                (DWORD)body.length(), 0);
-
-            if (!bResults) {
-                LOG("[RocketMax] [InitAPI] WinHttpSendRequest failed: " + std::to_string(GetLastError()));
-                throw std::runtime_error("WinHttpSendRequest failed");
-            }
-
-            // Receive response
-            bResults = WinHttpReceiveResponse(hRequest, NULL);
-            if (!bResults) {
-                LOG("[RocketMax] [InitAPI] WinHttpReceiveResponse failed: " + std::to_string(GetLastError()));
-                throw std::runtime_error("WinHttpReceiveResponse failed");
-            }
-
-            // Get status code
-            DWORD dwStatusCode = 0;
-            DWORD dwSize = sizeof(dwStatusCode);
-            WinHttpQueryHeaders(hRequest,
-                WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
-                WINHTTP_HEADER_NAME_BY_INDEX,
-                &dwStatusCode, &dwSize, WINHTTP_NO_HEADER_INDEX);
-            statusCode = (int)dwStatusCode;
-            LOG("[RocketMax] [InitAPI] Status code: " + std::to_string(statusCode));
-
-            // Read response body
-            DWORD dwDownloaded = 0;
-            do {
-                dwSize = 0;
-                if (!WinHttpQueryDataAvailable(hRequest, &dwSize)) {
-                    break;
-                }
-
-                if (dwSize == 0) break;
-
-                char* pszOutBuffer = new char[dwSize + 1];
-                ZeroMemory(pszOutBuffer, dwSize + 1);
-
-                if (WinHttpReadData(hRequest, (LPVOID)pszOutBuffer, dwSize, &dwDownloaded)) {
-                    result.append(pszOutBuffer, dwDownloaded);
-                }
-
-                delete[] pszOutBuffer;
-            } while (dwSize > 0);
-
-            LOG("[RocketMax] [InitAPI] Response body: " + result);
-            success = true;
-        }
-        catch (const std::exception& e) {
-            LOG("[RocketMax] [InitAPI] Exception: " + std::string(e.what()));
-        }
-
-        // Cleanup
-        if (hRequest) WinHttpCloseHandle(hRequest);
-        if (hConnect) WinHttpCloseHandle(hConnect);
-        if (hSession) WinHttpCloseHandle(hSession);
-
-        // Process response
-        if (success && statusCode == 200) {
-            LOG("[RocketMax] [InitAPI] DATA SENT");
-
-            // Extract auth_secret from response (only returned for new players)
-            std::string authSecret = extractJsonValue(result, "auth_secret");
-            if (!authSecret.empty() && authSecret != "null") {
-                LOG("[RocketMax] [InitAPI] Received NEW auth_secret from server");
-                gameWrapper->Execute([this, authSecret](GameWrapper* gw) {
+                // Extract auth_secret from response (only returned for new players)
+                std::string authSecret = extractJsonValue(result, "auth_secret");
+                if (!authSecret.empty() && authSecret != "null") {
+                    LOG("[RocketMax] [InitAPI] Received NEW auth_secret from server");
                     cvarManager->getCvar("rocketmax_auth_secret").setValue(authSecret);
-                });
-            }
-            else {
-                // Check if we have a locally stored auth_secret
-                std::string localSecret = *cvar_auth_secret;
-                if (localSecret.empty()) {
-                    LOG("[RocketMax] [InitAPI] WARNING: No auth_secret from server and none stored locally!");
                 }
                 else {
-                    LOG("[RocketMax] [InitAPI] Using locally stored auth_secret");
+                    // Check if we have a locally stored auth_secret
+                    std::string localSecret = *cvar_auth_secret;
+                    if (localSecret.empty()) {
+                        LOG("[RocketMax] [InitAPI] WARNING: No auth_secret from server and none stored locally!");
+                    }
+                    else {
+                        LOG("[RocketMax] [InitAPI] Using locally stored auth_secret");
+                    }
                 }
-            }
 
-            // Extract visibility state
-            std::string isHiddenStr = extractJsonValue(result, "is_hidden");
-            bool isHidden = (isHiddenStr == "true");
-            gameWrapper->Execute([this, isHidden](GameWrapper* gw) {
+                // Extract visibility state
+                std::string isHiddenStr = extractJsonValue(result, "is_hidden");
+                bool isHidden = (isHiddenStr == "true");
                 cvarManager->getCvar("rocketmax_hide_profile").setValue(isHidden ? "1" : "0");
-            });
 
-            // Extract access_token if profile is hidden
-            std::string accessToken = extractJsonValue(result, "access_token");
-            if (!accessToken.empty() && accessToken != "null") {
-                gameWrapper->Execute([this, accessToken](GameWrapper* gw) {
+                // Extract access_token if profile is hidden
+                std::string accessToken = extractJsonValue(result, "access_token");
+                if (!accessToken.empty() && accessToken != "null") {
                     cvarManager->getCvar("rocketmax_access_token").setValue(accessToken);
                     std::string profileUrl = std::string(API_ENDPOINT) + "/p/" + accessToken;
                     cvarManager->getCvar("rocketmax_profile_url").setValue(profileUrl);
                     LOG("[RocketMax] [InitAPI] Profile is hidden, URL: " + profileUrl);
+                }
+
+                gameWrapper->Execute([this](GameWrapper* gw) {
+                    std::string toastMsg = "Plugin v" + std::string(plugin_version) + " connecte et pret !";
+                    gw->Toast("RocketMax", toastMsg, "default", 5.0f);
                 });
             }
-
-            gameWrapper->Execute([this](GameWrapper* gw) {
-                std::string toastMsg = "Plugin v" + std::string(plugin_version) + " connecte et pret !";
-                gw->Toast("RocketMax", toastMsg, "default", 5.0f);
-            });
-        }
-        else if (success) {
-            LOG("[RocketMax] [InitAPI] ERROR - HTTP " + std::to_string(statusCode));
-            gameWrapper->Execute([this](GameWrapper* gw) {
-                gw->Toast("RocketMax", "Erreur de connexion au serveur", "default", 5.0f);
-            });
-        }
-        else {
-            gameWrapper->Execute([this](GameWrapper* gw) {
-                gw->Toast("RocketMax", "Impossible de contacter le serveur", "default", 5.0f);
-            });
-        }
-    }).detach();
-
+            else {
+                LOG("[RocketMax] [InitAPI] ERROR - HTTP " + std::to_string(code));
+                gameWrapper->Execute([this](GameWrapper* gw) {
+                    gw->Toast("RocketMax", "Erreur de connexion au serveur", "default", 5.0f);
+                });
+                return true;
+            }
+        });
     return false;
 }
 
@@ -928,146 +814,65 @@ void RocketMax::checkForUpdates()
     update_error = "";
     LOG("[RocketMax] [Update] Checking for updates...");
 
-    // Use WinHTTP for GitHub API (GET request)
-    std::thread([this]() {
-        HINTERNET hSession = NULL, hConnect = NULL, hRequest = NULL;
-        int statusCode = 0;
-        std::string result;
+    CurlRequest req;
+    req.url = GITHUB_API_RELEASES;
+    req.verb = "GET";
 
-        try {
-            LOG("[RocketMax] [Update] Creating WinHTTP session...");
+    HttpWrapper::SendCurlRequest(req, [this](int code, std::string result)
+    {
+        update_checking.store(false);
 
-            hSession = WinHttpOpen(L"RocketMax Plugin",
-                WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,
-                WINHTTP_NO_PROXY_NAME,
-                WINHTTP_NO_PROXY_BYPASS, 0);
-
-            if (!hSession) {
-                throw std::runtime_error("WinHttpOpen failed");
-            }
-
-            hConnect = WinHttpConnect(hSession, L"api.github.com",
-                INTERNET_DEFAULT_HTTPS_PORT, 0);
-
-            if (!hConnect) {
-                throw std::runtime_error("WinHttpConnect failed");
-            }
-
-            hRequest = WinHttpOpenRequest(hConnect, L"GET",
-                L"/repos/tellebma/RocketMax-Plugin/releases/latest",
-                NULL, WINHTTP_NO_REFERER,
-                WINHTTP_DEFAULT_ACCEPT_TYPES,
-                WINHTTP_FLAG_SECURE);
-
-            if (!hRequest) {
-                throw std::runtime_error("WinHttpOpenRequest failed");
-            }
-
-            // GitHub API requires User-Agent header
-            LPCWSTR headers = L"Accept: application/vnd.github.v3+json\r\nUser-Agent: RocketMax-Plugin\r\n";
-
-            BOOL bResults = WinHttpSendRequest(hRequest,
-                headers, -1,
-                WINHTTP_NO_REQUEST_DATA, 0, 0, 0);
-
-            if (!bResults) {
-                throw std::runtime_error("WinHttpSendRequest failed");
-            }
-
-            bResults = WinHttpReceiveResponse(hRequest, NULL);
-            if (!bResults) {
-                throw std::runtime_error("WinHttpReceiveResponse failed");
-            }
-
-            // Get status code
-            DWORD dwStatusCode = 0;
-            DWORD dwSize = sizeof(dwStatusCode);
-            WinHttpQueryHeaders(hRequest,
-                WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
-                WINHTTP_HEADER_NAME_BY_INDEX,
-                &dwStatusCode, &dwSize, WINHTTP_NO_HEADER_INDEX);
-            statusCode = (int)dwStatusCode;
-
-            // Read response body
-            DWORD dwDownloaded = 0;
-            do {
-                dwSize = 0;
-                if (!WinHttpQueryDataAvailable(hRequest, &dwSize)) break;
-                if (dwSize == 0) break;
-
-                char* pszOutBuffer = new char[dwSize + 1];
-                ZeroMemory(pszOutBuffer, dwSize + 1);
-
-                if (WinHttpReadData(hRequest, (LPVOID)pszOutBuffer, dwSize, &dwDownloaded)) {
-                    result.append(pszOutBuffer, dwDownloaded);
-                }
-                delete[] pszOutBuffer;
-            } while (dwSize > 0);
-        }
-        catch (const std::exception& e) {
-            LOG("[RocketMax] [Update] Exception: " + std::string(e.what()));
-            statusCode = 0;
+        if (code != 200) {
+            LOG("[RocketMax] [Update] Failed to check for updates. HTTP code: " + std::to_string(code));
+            update_error = "Erreur de connexion (code " + std::to_string(code) + ")";
+            return;
         }
 
-        // Cleanup
-        if (hRequest) WinHttpCloseHandle(hRequest);
-        if (hConnect) WinHttpCloseHandle(hConnect);
-        if (hSession) WinHttpCloseHandle(hSession);
+        LOG("[RocketMax] [Update] Received response from GitHub API");
 
-        // Process on game thread
-        gameWrapper->Execute([this, statusCode, result](GameWrapper* gw) {
-            update_checking.store(false);
+        // Extract tag_name using helper function
+        latest_version = extractJsonValue(result, "tag_name");
+        if (latest_version.empty()) {
+            LOG("[RocketMax] [Update] Could not find tag_name in response");
+            update_error = "Format de reponse invalide";
+            return;
+        }
+        LOG("[RocketMax] [Update] Latest version: " + latest_version);
 
-            if (statusCode != 200) {
-                LOG("[RocketMax] [Update] Failed to check for updates. HTTP code: " + std::to_string(statusCode));
-                update_error = "Erreur de connexion (code " + std::to_string(statusCode) + ")";
-                return;
-            }
-
-            LOG("[RocketMax] [Update] Received response from GitHub API");
-
-            // Extract tag_name using helper function
-            latest_version = extractJsonValue(result, "tag_name");
-            if (latest_version.empty()) {
-                LOG("[RocketMax] [Update] Could not find tag_name in response");
-                update_error = "Format de reponse invalide";
-                return;
-            }
-            LOG("[RocketMax] [Update] Latest version: " + latest_version);
-
-            // Find download URL for RocketMax.dll in assets array
-            std::string dllName = "RocketMax.dll";
-            size_t dllPos = result.find(dllName);
-            if (dllPos != std::string::npos) {
-                std::string urlKey = "\"browser_download_url\"";
-                size_t urlKeyPos = result.rfind(urlKey, dllPos);
-                if (urlKeyPos != std::string::npos) {
-                    size_t colonPos = result.find(":", urlKeyPos + urlKey.length());
-                    size_t quoteStart = result.find("\"", colonPos + 1);
-                    size_t quoteEnd = result.find("\"", quoteStart + 1);
-                    if (quoteStart != std::string::npos && quoteEnd != std::string::npos) {
-                        update_download_url = result.substr(quoteStart + 1, quoteEnd - quoteStart - 1);
-                        LOG("[RocketMax] [Update] Download URL: " + update_download_url);
-                    }
+        // Find download URL for RocketMax.dll in assets array
+        std::string dllName = "RocketMax.dll";
+        size_t dllPos = result.find(dllName);
+        if (dllPos != std::string::npos) {
+            std::string urlKey = "\"browser_download_url\"";
+            size_t urlKeyPos = result.rfind(urlKey, dllPos);
+            if (urlKeyPos != std::string::npos) {
+                size_t colonPos = result.find(":", urlKeyPos + urlKey.length());
+                size_t quoteStart = result.find("\"", colonPos + 1);
+                size_t quoteEnd = result.find("\"", quoteStart + 1);
+                if (quoteStart != std::string::npos && quoteEnd != std::string::npos) {
+                    update_download_url = result.substr(quoteStart + 1, quoteEnd - quoteStart - 1);
+                    LOG("[RocketMax] [Update] Download URL: " + update_download_url);
                 }
             }
+        }
 
-            // Check if this is a newer version
-            if (isNewerVersion(latest_version)) {
-                update_available.store(true);
-                LOG("[RocketMax] [Update] New version available: " + latest_version);
+        // Check if this is a newer version
+        if (isNewerVersion(latest_version)) {
+            update_available.store(true);
+            LOG("[RocketMax] [Update] New version available: " + latest_version);
 
+            gameWrapper->Execute([this](GameWrapper* gw) {
                 if (*cvar_enable_toasts) {
                     std::string msg = "Nouvelle version disponible: " + latest_version;
                     gw->Toast("RocketMax Update", msg, "default", 8.0f);
                 }
-            }
-            else {
-                update_available.store(false);
-                LOG("[RocketMax] [Update] Already on latest version");
-            }
-        });
-    }).detach();
+            });
+        }
+        else {
+            update_available.store(false);
+            LOG("[RocketMax] [Update] Already on latest version");
+        }
+    });
 }
 
 void RocketMax::launchUpdateScript()
@@ -1294,7 +1099,6 @@ void RocketMax::sendAuthenticatedRequest(const std::string& endpoint, const std:
     LOG("[RocketMax] [Auth] Body: " + body.substr(0, 200) + (body.length() > 200 ? "..." : ""));
 
     std::string signature = "";
-    std::string playerIdCopy = playerId;
 
     if (!authSecret.empty()) {
         LOG("[RocketMax] [Auth] auth_secret length: " + std::to_string(authSecret.length()));
@@ -1309,115 +1113,26 @@ void RocketMax::sendAuthenticatedRequest(const std::string& endpoint, const std:
         LOG("[RocketMax] [Auth] WARNING: No auth secret available, sending unauthenticated request");
     }
 
-    // Use WinHTTP in a separate thread
-    std::thread([this, endpoint, body, signature, playerIdCopy, callback]() {
-        HINTERNET hSession = NULL, hConnect = NULL, hRequest = NULL;
-        int statusCode = 0;
-        std::string result;
+    // Build the request using HttpWrapper
+    CurlRequest req;
+    req.url = std::string(API_ENDPOINT) + endpoint;
+    req.verb = "POST";
+    req.body = body;
+    req.headers["Content-Type"] = "application/json";
 
-        try {
-            LOG("[RocketMax] [Auth] Creating WinHTTP session...");
+    if (!signature.empty()) {
+        req.headers["X-Player-Id"] = playerId;
+        req.headers["X-Signature"] = signature;
+    }
 
-            hSession = WinHttpOpen(L"RocketMax Plugin",
-                WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,
-                WINHTTP_NO_PROXY_NAME,
-                WINHTTP_NO_PROXY_BYPASS, 0);
+    LOG("[RocketMax] [Auth] URL: " + req.url);
+    LOG("[RocketMax] [Auth] Headers set: Content-Type, X-Player-Id, X-Signature");
 
-            if (!hSession) {
-                LOG("[RocketMax] [Auth] WinHttpOpen failed: " + std::to_string(GetLastError()));
-                throw std::runtime_error("WinHttpOpen failed");
-            }
-
-            hConnect = WinHttpConnect(hSession, L"rocketmax.tellebma.fr",
-                INTERNET_DEFAULT_HTTPS_PORT, 0);
-
-            if (!hConnect) {
-                LOG("[RocketMax] [Auth] WinHttpConnect failed: " + std::to_string(GetLastError()));
-                throw std::runtime_error("WinHttpConnect failed");
-            }
-
-            // Convert endpoint to wide string
-            std::wstring wEndpoint(endpoint.begin(), endpoint.end());
-
-            hRequest = WinHttpOpenRequest(hConnect, L"POST", wEndpoint.c_str(),
-                NULL, WINHTTP_NO_REFERER,
-                WINHTTP_DEFAULT_ACCEPT_TYPES,
-                WINHTTP_FLAG_SECURE);
-
-            if (!hRequest) {
-                LOG("[RocketMax] [Auth] WinHttpOpenRequest failed: " + std::to_string(GetLastError()));
-                throw std::runtime_error("WinHttpOpenRequest failed");
-            }
-
-            // Build headers
-            std::wstring headers = L"Content-Type: application/json\r\n";
-            if (!signature.empty()) {
-                std::wstring wPlayerId(playerIdCopy.begin(), playerIdCopy.end());
-                std::wstring wSignature(signature.begin(), signature.end());
-                headers += L"X-Player-Id: " + wPlayerId + L"\r\n";
-                headers += L"X-Signature: " + wSignature + L"\r\n";
-            }
-
-            // Send request
-            BOOL bResults = WinHttpSendRequest(hRequest,
-                headers.c_str(), -1,
-                (LPVOID)body.c_str(), (DWORD)body.length(),
-                (DWORD)body.length(), 0);
-
-            if (!bResults) {
-                LOG("[RocketMax] [Auth] WinHttpSendRequest failed: " + std::to_string(GetLastError()));
-                throw std::runtime_error("WinHttpSendRequest failed");
-            }
-
-            bResults = WinHttpReceiveResponse(hRequest, NULL);
-            if (!bResults) {
-                LOG("[RocketMax] [Auth] WinHttpReceiveResponse failed: " + std::to_string(GetLastError()));
-                throw std::runtime_error("WinHttpReceiveResponse failed");
-            }
-
-            // Get status code
-            DWORD dwStatusCode = 0;
-            DWORD dwSize = sizeof(dwStatusCode);
-            WinHttpQueryHeaders(hRequest,
-                WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
-                WINHTTP_HEADER_NAME_BY_INDEX,
-                &dwStatusCode, &dwSize, WINHTTP_NO_HEADER_INDEX);
-            statusCode = (int)dwStatusCode;
-            LOG("[RocketMax] [Auth] Status code: " + std::to_string(statusCode));
-
-            // Read response body
-            DWORD dwDownloaded = 0;
-            do {
-                dwSize = 0;
-                if (!WinHttpQueryDataAvailable(hRequest, &dwSize)) break;
-                if (dwSize == 0) break;
-
-                char* pszOutBuffer = new char[dwSize + 1];
-                ZeroMemory(pszOutBuffer, dwSize + 1);
-
-                if (WinHttpReadData(hRequest, (LPVOID)pszOutBuffer, dwSize, &dwDownloaded)) {
-                    result.append(pszOutBuffer, dwDownloaded);
-                }
-                delete[] pszOutBuffer;
-            } while (dwSize > 0);
-
-            LOG("[RocketMax] [Auth] Response body: " + result);
-        }
-        catch (const std::exception& e) {
-            LOG("[RocketMax] [Auth] Exception: " + std::string(e.what()));
-            statusCode = 0;
-        }
-
-        // Cleanup
-        if (hRequest) WinHttpCloseHandle(hRequest);
-        if (hConnect) WinHttpCloseHandle(hConnect);
-        if (hSession) WinHttpCloseHandle(hSession);
-
-        // Call callback on game thread
-        gameWrapper->Execute([callback, statusCode, result](GameWrapper* gw) {
-            callback(statusCode, result);
-        });
-    }).detach();
+    HttpWrapper::SendCurlRequest(req, [this, callback](int code, std::string result) {
+        LOG("[RocketMax] [Auth] Response code: " + std::to_string(code));
+        LOG("[RocketMax] [Auth] Response body: " + result);
+        callback(code, result);
+    });
 }
 
 void RocketMax::setProfileVisibility(bool hidden)

@@ -21,7 +21,6 @@
 
 
 
-using namespace std::this_thread; // sleep_for, sleep_until
 using namespace std::chrono; // nanoseconds, system_clock, seconds
 
 BAKKESMOD_PLUGIN(RocketMax, "RocketMax", plugin_version, PLUGINTYPE_FREEPLAY)
@@ -324,9 +323,7 @@ bool RocketMax::sendMmrUpdate(long long timestamp)
         }
         else {
             LOG("[RocketMax] [sendMmrUpdate] ERROR DATA NOT SENT");
-            return true;
         }
-
     });
     return false;
 }
@@ -407,7 +404,6 @@ bool RocketMax::initAPI()
                 gameWrapper->Execute([this](GameWrapper* gw) {
                     gw->Toast("RocketMax", "Erreur de connexion au serveur", "default", 5.0f);
                 });
-                return true;
             }
         });
     return false;
@@ -545,9 +541,7 @@ bool RocketMax::sendHistoriqueGame(long long timestamp)
                         gw->Toast("RocketMax", "Hors ligne - donnees sauvegardees", "default", 5.0f);
                     });
                 }
-                return true;
             }
-
         });
     return false;
 }

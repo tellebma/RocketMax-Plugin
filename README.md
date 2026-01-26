@@ -5,8 +5,8 @@ Il permet d'envoyer a un serveur externe par défaut [histo.tellebma.fr](https:/
 
 L'interface front est également toujours en développement [Github front](https://github.com/tellebma/RocketMax-FrontEnd)
 
-
-![page principale, affichage global du compte](https://github.com/tellebma/RocketMax-FrontEnd/blob/main/doc/main_page.png)
+<img width="1435" height="821" alt="page principale, affichage global du compte" src="https://github.com/user-attachments/assets/b72e9315-faef-48da-b8b1-3ccdb940b917" />
+<img width="1343" height="843" alt="stats + elo et badges" src="https://github.com/user-attachments/assets/920f1ea1-2fd4-4f5d-a927-216e2c5fd6ba" />
 
 
 # Release 

@@ -246,7 +246,7 @@ jobs:
           echo "$OUTPUT"
 
           # Look for published release (handles various semantic-release output formats)
-          VERSION=$(echo "$OUTPUT" | grep -oiP '(Published release|Created tag v?)\K[0-9]+\.[0-9]+\.[0-9]+' | head -1 || echo "")
+          VERSION=$(echo "$OUTPUT" | grep -oiP '(Published release |Created tag v?)\K[0-9]+\.[0-9]+\.[0-9]+' | head -1 || echo "")
           if [ -n "$VERSION" ]; then
             echo "version=$VERSION" >> $GITHUB_OUTPUT
             echo "released=true" >> $GITHUB_OUTPUT

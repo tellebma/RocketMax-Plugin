@@ -340,16 +340,10 @@ bool RocketMax::initAPI()
     LOG("[RocketMax] [InitAPI] " + playerId);
     LOG("[RocketMax] [InitAPI] " + playerName);
 
-    // Check if we have a locally stored auth_secret
-    std::string localSecret = *cvar_auth_secret;
-    bool needsAuthSecret = localSecret.empty();
-    LOG("[RocketMax] [InitAPI] Local auth_secret exists: " + std::string(needsAuthSecret ? "NO" : "YES"));
-
     CurlRequest req;
     req.url = std::string(API_ENDPOINT) + "/initPlayer";
     req.body = R"({"player_id": ")" + playerId +
-        R"(", "player_name": ")" + playerName +
-        R"(", "needs_auth_secret": )" + (needsAuthSecret ? "true" : "false") + R"(})";
+        R"(", "player_name": ")" + playerName + R"("})";
 
 
     HttpWrapper::SendCurlJsonRequest(req, [this](int code, std::string result)
@@ -358,21 +352,11 @@ bool RocketMax::initAPI()
             if (code == 200) {
                 LOG("[RocketMax] [InitAPI] DATA SENT");
 
-                // Extract auth_secret from response (only returned for new players)
+                // Extract and store auth_secret from response
                 std::string authSecret = extractJsonValue(result, "auth_secret");
-                if (!authSecret.empty() && authSecret != "null") {
-                    LOG("[RocketMax] [InitAPI] Received NEW auth_secret from server");
+                if (!authSecret.empty()) {
+                    LOG("[RocketMax] [InitAPI] Received auth_secret");
                     cvarManager->getCvar("rocketmax_auth_secret").setValue(authSecret);
-                }
-                else {
-                    // Check if we have a locally stored auth_secret
-                    std::string localSecret = *cvar_auth_secret;
-                    if (localSecret.empty()) {
-                        LOG("[RocketMax] [InitAPI] WARNING: No auth_secret from server and none stored locally!");
-                    }
-                    else {
-                        LOG("[RocketMax] [InitAPI] Using locally stored auth_secret");
-                    }
                 }
 
                 // Extract visibility state
@@ -382,7 +366,7 @@ bool RocketMax::initAPI()
 
                 // Extract access_token if profile is hidden
                 std::string accessToken = extractJsonValue(result, "access_token");
-                if (!accessToken.empty() && accessToken != "null") {
+                if (!accessToken.empty()) {
                     cvarManager->getCvar("rocketmax_access_token").setValue(accessToken);
                     std::string profileUrl = std::string(API_ENDPOINT) + "/p/" + accessToken;
                     cvarManager->getCvar("rocketmax_profile_url").setValue(profileUrl);
@@ -391,13 +375,13 @@ bool RocketMax::initAPI()
 
                 gameWrapper->Execute([this](GameWrapper* gw) {
                     std::string toastMsg = "Plugin v" + std::string(plugin_version) + " connecte et pret !";
-                    gw->Toast("RocketMax", toastMsg);
+                    gw->Toast("RocketMax", toastMsg, "default", 5.0f, ToastType_OK);
                 });
             }
             else {
                 LOG("[RocketMax] [InitAPI] ERROR DATA NOT SENT");
                 gameWrapper->Execute([this](GameWrapper* gw) {
-                    gw->Toast("RocketMax", "Erreur de connexion au serveur");
+                    gw->Toast("RocketMax", "Erreur de connexion au serveur", "default", 5.0f, ToastType_Error);
                 });
                 return true;
             }
@@ -517,7 +501,7 @@ bool RocketMax::sendHistoriqueGame(long long timestamp)
                 if (*cvar_enable_toasts) {
                     gameWrapper->Execute([this, mmr_display, mmr_diff](GameWrapper* gw) {
                         std::string toastMsg = "Donnees envoyees ! MMR: " + std::to_string(mmr_display) + " (" + (mmr_diff >= 0 ? "+" : "") + std::to_string(mmr_diff) + ")";
-                        gw->Toast("RocketMax", toastMsg);
+                        gw->Toast("RocketMax", toastMsg, "default", 5.0f, ToastType_OK);
                     });
                 }
             }
@@ -525,7 +509,7 @@ bool RocketMax::sendHistoriqueGame(long long timestamp)
                 LOG("[RocketMax] [sendHistoriqueGame] AUTHENTICATION FAILED");
                 if (*cvar_enable_toasts) {
                     gameWrapper->Execute([this](GameWrapper* gw) {
-                        gw->Toast("RocketMax", "Erreur d'authentification");
+                        gw->Toast("RocketMax", "Erreur d'authentification", "default", 5.0f, ToastType_Error);
                     });
                 }
             }
@@ -535,7 +519,7 @@ bool RocketMax::sendHistoriqueGame(long long timestamp)
                 saveToOfflineQueue("/updateHistorique", requestBody);
                 if (*cvar_enable_toasts) {
                     gameWrapper->Execute([this](GameWrapper* gw) {
-                        gw->Toast("RocketMax", "Hors ligne - donnees sauvegardees");
+                        gw->Toast("RocketMax", "Hors ligne - donnees sauvegardees", "default", 5.0f, ToastType_Warning);
                     });
                 }
                 return true;
@@ -598,10 +582,10 @@ void RocketMax::showStreakToast()
         std::string msg;
         if (current_streak > 0) {
             msg = "Win Streak: " + std::to_string(current_streak) + " victoires !";
-            gw->Toast("RocketMax", msg);
+            gw->Toast("RocketMax", msg, "default", 5.0f, ToastType_OK);
         } else {
             msg = "Lose Streak: " + std::to_string(std::abs(current_streak)) + " defaites...";
-            gw->Toast("RocketMax", msg);
+            gw->Toast("RocketMax", msg, "default", 5.0f, ToastType_Error);
         }
     });
 }
@@ -703,8 +687,8 @@ std::filesystem::path RocketMax::getUpdateScriptPath()
 
 std::string RocketMax::extractJsonValue(const std::string& json, const std::string& key)
 {
-    // JSON value extractor that handles strings, booleans, null, and numbers
-    // Looks for: "key": "value" or "key": value or "key":value
+    // Simple JSON value extractor for string values
+    // Looks for: "key": "value" or "key":"value"
     std::string searchKey = "\"" + key + "\"";
     size_t keyPos = json.find(searchKey);
     if (keyPos == std::string::npos) {
@@ -717,47 +701,26 @@ std::string RocketMax::extractJsonValue(const std::string& json, const std::stri
         return "";
     }
 
-    // Skip whitespace after colon
-    size_t valueStart = colonPos + 1;
-    while (valueStart < json.length() && (json[valueStart] == ' ' || json[valueStart] == '\t' || json[valueStart] == '\n' || json[valueStart] == '\r')) {
-        valueStart++;
-    }
-
-    if (valueStart >= json.length()) {
+    // Skip whitespace and find opening quote
+    size_t quoteStart = json.find("\"", colonPos + 1);
+    if (quoteStart == std::string::npos) {
         return "";
     }
 
-    // Check if it's a string value (starts with quote)
-    if (json[valueStart] == '\"') {
-        // Find closing quote (handle escaped quotes)
-        size_t quoteEnd = valueStart + 1;
-        while (quoteEnd < json.length()) {
-            if (json[quoteEnd] == '\"' && json[quoteEnd - 1] != '\\') {
-                break;
-            }
-            quoteEnd++;
+    // Find closing quote (handle escaped quotes)
+    size_t quoteEnd = quoteStart + 1;
+    while (quoteEnd < json.length()) {
+        if (json[quoteEnd] == '\"' && json[quoteEnd - 1] != '\\') {
+            break;
         }
-
-        if (quoteEnd >= json.length()) {
-            return "";
-        }
-
-        return json.substr(valueStart + 1, quoteEnd - valueStart - 1);
+        quoteEnd++;
     }
-    else {
-        // Non-string value (boolean, null, number)
-        // Find the end of the value (comma, closing brace/bracket, or whitespace)
-        size_t valueEnd = valueStart;
-        while (valueEnd < json.length()) {
-            char c = json[valueEnd];
-            if (c == ',' || c == '}' || c == ']' || c == ' ' || c == '\t' || c == '\n' || c == '\r') {
-                break;
-            }
-            valueEnd++;
-        }
 
-        return json.substr(valueStart, valueEnd - valueStart);
+    if (quoteEnd >= json.length()) {
+        return "";
     }
+
+    return json.substr(quoteStart + 1, quoteEnd - quoteStart - 1);
 }
 
 bool RocketMax::parseVersionString(const std::string& version, int& major, int& minor, int& patch)
@@ -862,7 +825,7 @@ void RocketMax::checkForUpdates()
             gameWrapper->Execute([this](GameWrapper* gw) {
                 if (*cvar_enable_toasts) {
                     std::string msg = "Nouvelle version disponible: " + latest_version;
-                    gw->Toast("RocketMax Update", msg);
+                    gw->Toast("RocketMax Update", msg, "default", 8.0f, ToastType_Info);
                 }
             });
         }
@@ -982,7 +945,7 @@ void RocketMax::launchUpdateScript()
     update_available.store(false);
 
     gameWrapper->Execute([this](GameWrapper* gw) {
-        gw->Toast("RocketMax Update", "Script de mise a jour lance!");
+        gw->Toast("RocketMax Update", "Script de mise a jour lance!", "default", 5.0f, ToastType_OK);
     });
 }
 
@@ -997,10 +960,6 @@ std::string RocketMax::computeHmacSha256(const std::string& data, const std::str
     DWORD dwHashLen = 32; // SHA256 = 32 bytes
     std::string result;
 
-    LOG("[RocketMax] [HMAC] Computing HMAC-SHA256...");
-    LOG("[RocketMax] [HMAC] Data length: " + std::to_string(data.length()));
-    LOG("[RocketMax] [HMAC] Key length: " + std::to_string(key.length()));
-
     // Structure for importing the key
     struct {
         BLOBHEADER hdr;
@@ -1009,7 +968,7 @@ std::string RocketMax::computeHmacSha256(const std::string& data, const std::str
     } keyBlob;
 
     if (!CryptAcquireContext(&hProv, NULL, NULL, PROV_RSA_AES, CRYPT_VERIFYCONTEXT)) {
-        LOG("[RocketMax] [HMAC] CryptAcquireContext failed - Error: " + std::to_string(GetLastError()));
+        LOG("[RocketMax] [HMAC] CryptAcquireContext failed");
         return "";
     }
 
@@ -1076,8 +1035,6 @@ std::string RocketMax::computeHmacSha256(const std::string& data, const std::str
     }
     result = ss.str();
 
-    LOG("[RocketMax] [HMAC] Successfully computed HMAC, result length: " + std::to_string(result.length()));
-
     // Cleanup
     delete[] pbHash;
     CryptDestroyHash(hHash);
@@ -1091,13 +1048,8 @@ void RocketMax::sendAuthenticatedRequest(const std::string& endpoint, const std:
     std::function<void(int, std::string)> callback)
 {
     std::string authSecret = *cvar_auth_secret;
-    LOG("[RocketMax] [Auth] === Sending authenticated request ===");
-    LOG("[RocketMax] [Auth] Endpoint: " + endpoint);
-    LOG("[RocketMax] [Auth] Body length: " + std::to_string(body.length()));
-    LOG("[RocketMax] [Auth] Body: " + body.substr(0, 200) + (body.length() > 200 ? "..." : ""));
-
     if (authSecret.empty()) {
-        LOG("[RocketMax] [Auth] WARNING: No auth secret available, sending unauthenticated request");
+        LOG("[RocketMax] [Auth] No auth secret available, sending unauthenticated request");
         // Fallback to unauthenticated request (for backwards compatibility during migration)
         CurlRequest req;
         req.url = std::string(API_ENDPOINT) + endpoint;
@@ -1106,13 +1058,9 @@ void RocketMax::sendAuthenticatedRequest(const std::string& endpoint, const std:
         return;
     }
 
-    LOG("[RocketMax] [Auth] auth_secret length: " + std::to_string(authSecret.length()));
-    LOG("[RocketMax] [Auth] auth_secret (first 8 chars): " + authSecret.substr(0, 8) + "...");
-
     // Compute HMAC-SHA256 signature
     std::string signature = computeHmacSha256(body, authSecret);
-    LOG("[RocketMax] [Auth] Computed signature: " + signature.substr(0, 16) + "...");
-    LOG("[RocketMax] [Auth] Player ID: " + playerId);
+    LOG("[RocketMax] [Auth] Computed signature for " + endpoint);
 
     CurlRequest req;
     req.url = std::string(API_ENDPOINT) + endpoint;
@@ -1141,7 +1089,7 @@ void RocketMax::setProfileVisibility(bool hidden)
             // Extract access_token from response if profile is hidden
             if (hidden) {
                 std::string token = extractJsonValue(result, "access_token");
-                if (!token.empty() && token != "null") {
+                if (!token.empty()) {
                     cvarManager->getCvar("rocketmax_access_token").setValue(token);
                     std::string profileUrl = std::string(API_ENDPOINT) + "/p/" + token;
                     cvarManager->getCvar("rocketmax_profile_url").setValue(profileUrl);
@@ -1151,22 +1099,22 @@ void RocketMax::setProfileVisibility(bool hidden)
 
             gameWrapper->Execute([this, hidden](GameWrapper* gw) {
                 if (hidden) {
-                    gw->Toast("RocketMax", "Profil masque ! Utilisez le lien prive pour y acceder.");
+                    gw->Toast("RocketMax", "Profil masque ! Utilisez le lien prive pour y acceder.", "default", 5.0f, ToastType_OK);
                 } else {
-                    gw->Toast("RocketMax", "Profil rendu public.");
+                    gw->Toast("RocketMax", "Profil rendu public.", "default", 5.0f, ToastType_OK);
                 }
             });
         }
         else if (code == 401) {
             LOG("[RocketMax] [Privacy] Authentication failed");
             gameWrapper->Execute([this](GameWrapper* gw) {
-                gw->Toast("RocketMax", "Erreur d'authentification. Essayez de recharger le plugin.");
+                gw->Toast("RocketMax", "Erreur d'authentification. Essayez de recharger le plugin.", "default", 5.0f, ToastType_Error);
             });
         }
         else {
             LOG("[RocketMax] [Privacy] setVisibility failed with code: " + std::to_string(code));
             gameWrapper->Execute([this](GameWrapper* gw) {
-                gw->Toast("RocketMax", "Erreur lors du changement de visibilite.");
+                gw->Toast("RocketMax", "Erreur lors du changement de visibilite.", "default", 5.0f, ToastType_Error);
             });
         }
     });
@@ -1181,7 +1129,7 @@ void RocketMax::regenerateAccessToken()
 
         if (code == 200) {
             std::string token = extractJsonValue(result, "access_token");
-            if (!token.empty() && token != "null") {
+            if (!token.empty()) {
                 cvarManager->getCvar("rocketmax_access_token").setValue(token);
                 std::string profileUrl = std::string(API_ENDPOINT) + "/p/" + token;
                 cvarManager->getCvar("rocketmax_profile_url").setValue(profileUrl);
@@ -1189,13 +1137,13 @@ void RocketMax::regenerateAccessToken()
             }
 
             gameWrapper->Execute([this](GameWrapper* gw) {
-                gw->Toast("RocketMax", "Nouveau lien prive genere ! L'ancien lien ne fonctionne plus.");
+                gw->Toast("RocketMax", "Nouveau lien prive genere ! L'ancien lien ne fonctionne plus.", "default", 5.0f, ToastType_OK);
             });
         }
         else {
-            LOG("[RocketMax] [Privacy] regenerateAccessToken failed with code: " + std::to_string(code));
+            LOG("[RocketMax] [Privacy] regenerateAccessToken failed");
             gameWrapper->Execute([this](GameWrapper* gw) {
-                gw->Toast("RocketMax", "Erreur lors de la regeneration du lien.");
+                gw->Toast("RocketMax", "Erreur lors de la regeneration du lien.", "default", 5.0f, ToastType_Error);
             });
         }
     });
@@ -1222,7 +1170,7 @@ void RocketMax::copyProfileLinkToClipboard()
         LOG("[RocketMax] [Privacy] Copied profile URL to clipboard: " + url);
 
         gameWrapper->Execute([this](GameWrapper* gw) {
-            gw->Toast("RocketMax", "Lien copie dans le presse-papiers !");
+            gw->Toast("RocketMax", "Lien copie dans le presse-papiers !", "default", 3.0f, ToastType_OK);
         });
     }
 }

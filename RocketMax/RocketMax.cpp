@@ -51,6 +51,8 @@ std::map<int, std::string> gameModes = {
     {AutoTournament, "Auto Tournament"}
 };
 
+// Forward declaration - escapes curly braces for logging (std::format uses {} as placeholders)
+std::string escapeForLog(const std::string& str);
 
 void RocketMax::onLoad()
 {

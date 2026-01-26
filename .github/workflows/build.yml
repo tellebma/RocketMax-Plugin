@@ -69,8 +69,8 @@ jobs:
             exit 1
           fi
 
-          # Look for "The next release version is X.X.X" (case insensitive)
-          VERSION=$(echo "$OUTPUT" | grep -oiP 'The next release version is \K[0-9]+\.[0-9]+\.[0-9]+' || echo "")
+          # Look for "next release version is X.X.X" (handles both "The next release..." and "There is no previous release, the next release...")
+          VERSION=$(echo "$OUTPUT" | grep -oiP 'next release version is \K[0-9]+\.[0-9]+\.[0-9]+' || echo "")
           if [ -n "$VERSION" ]; then
             echo "version=$VERSION" >> $GITHUB_OUTPUT
             echo "should_release=true" >> $GITHUB_OUTPUT
@@ -259,8 +259,8 @@ jobs:
             fi
           fi
 
-          # Look for published release
-          VERSION=$(echo "$OUTPUT" | grep -oP 'Published release \K[0-9]+\.[0-9]+\.[0-9]+' || echo "")
+          # Look for published release (handles various semantic-release output formats)
+          VERSION=$(echo "$OUTPUT" | grep -oiP '(Published release|Created tag v?)\K[0-9]+\.[0-9]+\.[0-9]+' | head -1 || echo "")
           if [ -n "$VERSION" ]; then
             echo "version=$VERSION" >> $GITHUB_OUTPUT
             echo "released=true" >> $GITHUB_OUTPUT

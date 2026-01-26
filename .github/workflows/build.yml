@@ -64,7 +64,8 @@ jobs:
           echo "$OUTPUT"
 
           # Check for actual errors (not just "no release needed")
-          if echo "$OUTPUT" | grep -qiE "(ENOTOKEN|EINVALIDTOKEN|Authentication|ENOGITHEAD|ENOTINHISTORY)"; then
+          # Note: Use specific error codes only, avoid generic words like "Authentication" that could appear in commit messages
+          if echo "$OUTPUT" | grep -qE "(ENOTOKEN|EINVALIDTOKEN|ENOGITHEAD|ENOTINHISTORY|EGITNOTAGS)"; then
             echo "::error::semantic-release encountered a configuration error"
             exit 1
           fi
@@ -253,7 +254,7 @@ jobs:
 
           # Check for actual errors
           if [ $EXIT_CODE -ne 0 ]; then
-            if echo "$OUTPUT" | grep -qiE "(ENOTOKEN|EINVALIDTOKEN|Authentication|ENOGITHEAD)"; then
+            if echo "$OUTPUT" | grep -qE "(ENOTOKEN|EINVALIDTOKEN|ENOGITHEAD|ENOTINHISTORY|EGITNOTAGS)"; then
               echo "::error::semantic-release encountered a configuration error"
               exit 1
             fi

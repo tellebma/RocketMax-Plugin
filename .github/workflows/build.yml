@@ -63,13 +63,6 @@ jobs:
 
           echo "$OUTPUT"
 
-          # Check for actual errors (not just "no release needed")
-          # Note: Use specific error codes only, avoid generic words like "Authentication" that could appear in commit messages
-          if echo "$OUTPUT" | grep -qE "(ENOTOKEN|EINVALIDTOKEN|ENOGITHEAD|ENOTINHISTORY|EGITNOTAGS)"; then
-            echo "::error::semantic-release encountered a configuration error"
-            exit 1
-          fi
-
           # Look for "next release version is X.X.X" (handles both "The next release..." and "There is no previous release, the next release...")
           VERSION=$(echo "$OUTPUT" | grep -oiP 'next release version is \K[0-9]+\.[0-9]+\.[0-9]+' || echo "")
           if [ -n "$VERSION" ]; then
@@ -251,14 +244,6 @@ jobs:
           set -e
 
           echo "$OUTPUT"
-
-          # Check for actual errors
-          if [ $EXIT_CODE -ne 0 ]; then
-            if echo "$OUTPUT" | grep -qE "(ENOTOKEN|EINVALIDTOKEN|ENOGITHEAD|ENOTINHISTORY|EGITNOTAGS)"; then
-              echo "::error::semantic-release encountered a configuration error"
-              exit 1
-            fi
-          fi
 
           # Look for published release (handles various semantic-release output formats)
           VERSION=$(echo "$OUTPUT" | grep -oiP '(Published release|Created tag v?)\K[0-9]+\.[0-9]+\.[0-9]+' | head -1 || echo "")

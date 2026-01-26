@@ -391,13 +391,13 @@ bool RocketMax::initAPI()
 
                 gameWrapper->Execute([this](GameWrapper* gw) {
                     std::string toastMsg = "Plugin v" + std::string(plugin_version) + " connecte et pret !";
-                    gw->Toast("RocketMax", toastMsg);
+                    gw->Toast("RocketMax", toastMsg, "default", 5.0f);
                 });
             }
             else {
                 LOG("[RocketMax] [InitAPI] ERROR DATA NOT SENT");
                 gameWrapper->Execute([this](GameWrapper* gw) {
-                    gw->Toast("RocketMax", "Erreur de connexion au serveur");
+                    gw->Toast("RocketMax", "Erreur de connexion au serveur", "default", 5.0f);
                 });
                 return true;
             }
@@ -517,7 +517,7 @@ bool RocketMax::sendHistoriqueGame(long long timestamp)
                 if (*cvar_enable_toasts) {
                     gameWrapper->Execute([this, mmr_display, mmr_diff](GameWrapper* gw) {
                         std::string toastMsg = "Donnees envoyees ! MMR: " + std::to_string(mmr_display) + " (" + (mmr_diff >= 0 ? "+" : "") + std::to_string(mmr_diff) + ")";
-                        gw->Toast("RocketMax", toastMsg);
+                        gw->Toast("RocketMax", toastMsg, "default", 5.0f);
                     });
                 }
             }
@@ -525,7 +525,7 @@ bool RocketMax::sendHistoriqueGame(long long timestamp)
                 LOG("[RocketMax] [sendHistoriqueGame] AUTHENTICATION FAILED");
                 if (*cvar_enable_toasts) {
                     gameWrapper->Execute([this](GameWrapper* gw) {
-                        gw->Toast("RocketMax", "Erreur d'authentification");
+                        gw->Toast("RocketMax", "Erreur d'authentification", "default", 5.0f);
                     });
                 }
             }
@@ -535,7 +535,7 @@ bool RocketMax::sendHistoriqueGame(long long timestamp)
                 saveToOfflineQueue("/updateHistorique", requestBody);
                 if (*cvar_enable_toasts) {
                     gameWrapper->Execute([this](GameWrapper* gw) {
-                        gw->Toast("RocketMax", "Hors ligne - donnees sauvegardees");
+                        gw->Toast("RocketMax", "Hors ligne - donnees sauvegardees", "default", 5.0f);
                     });
                 }
                 return true;
@@ -598,10 +598,10 @@ void RocketMax::showStreakToast()
         std::string msg;
         if (current_streak > 0) {
             msg = "Win Streak: " + std::to_string(current_streak) + " victoires !";
-            gw->Toast("RocketMax", msg);
+            gw->Toast("RocketMax", msg, "default", 5.0f);
         } else {
             msg = "Lose Streak: " + std::to_string(std::abs(current_streak)) + " defaites...";
-            gw->Toast("RocketMax", msg);
+            gw->Toast("RocketMax", msg, "default", 5.0f);
         }
     });
 }
@@ -862,7 +862,7 @@ void RocketMax::checkForUpdates()
             gameWrapper->Execute([this](GameWrapper* gw) {
                 if (*cvar_enable_toasts) {
                     std::string msg = "Nouvelle version disponible: " + latest_version;
-                    gw->Toast("RocketMax Update", msg);
+                    gw->Toast("RocketMax Update", msg, "default", 8.0f);
                 }
             });
         }
@@ -982,7 +982,7 @@ void RocketMax::launchUpdateScript()
     update_available.store(false);
 
     gameWrapper->Execute([this](GameWrapper* gw) {
-        gw->Toast("RocketMax Update", "Script de mise a jour lance!");
+        gw->Toast("RocketMax Update", "Script de mise a jour lance!", "default", 5.0f);
     });
 }
 
@@ -1151,22 +1151,22 @@ void RocketMax::setProfileVisibility(bool hidden)
 
             gameWrapper->Execute([this, hidden](GameWrapper* gw) {
                 if (hidden) {
-                    gw->Toast("RocketMax", "Profil masque ! Utilisez le lien prive pour y acceder.");
+                    gw->Toast("RocketMax", "Profil masque ! Utilisez le lien prive pour y acceder.", "default", 5.0f);
                 } else {
-                    gw->Toast("RocketMax", "Profil rendu public.");
+                    gw->Toast("RocketMax", "Profil rendu public.", "default", 5.0f);
                 }
             });
         }
         else if (code == 401) {
             LOG("[RocketMax] [Privacy] Authentication failed");
             gameWrapper->Execute([this](GameWrapper* gw) {
-                gw->Toast("RocketMax", "Erreur d'authentification. Essayez de recharger le plugin.");
+                gw->Toast("RocketMax", "Erreur d'authentification. Essayez de recharger le plugin.", "default", 5.0f);
             });
         }
         else {
             LOG("[RocketMax] [Privacy] setVisibility failed with code: " + std::to_string(code));
             gameWrapper->Execute([this](GameWrapper* gw) {
-                gw->Toast("RocketMax", "Erreur lors du changement de visibilite.");
+                gw->Toast("RocketMax", "Erreur lors du changement de visibilite.", "default", 5.0f);
             });
         }
     });
@@ -1189,13 +1189,13 @@ void RocketMax::regenerateAccessToken()
             }
 
             gameWrapper->Execute([this](GameWrapper* gw) {
-                gw->Toast("RocketMax", "Nouveau lien prive genere ! L'ancien lien ne fonctionne plus.");
+                gw->Toast("RocketMax", "Nouveau lien prive genere ! L'ancien lien ne fonctionne plus.", "default", 5.0f);
             });
         }
         else {
             LOG("[RocketMax] [Privacy] regenerateAccessToken failed with code: " + std::to_string(code));
             gameWrapper->Execute([this](GameWrapper* gw) {
-                gw->Toast("RocketMax", "Erreur lors de la regeneration du lien.");
+                gw->Toast("RocketMax", "Erreur lors de la regeneration du lien.", "default", 5.0f);
             });
         }
     });
@@ -1222,7 +1222,7 @@ void RocketMax::copyProfileLinkToClipboard()
         LOG("[RocketMax] [Privacy] Copied profile URL to clipboard: " + url);
 
         gameWrapper->Execute([this](GameWrapper* gw) {
-            gw->Toast("RocketMax", "Lien copie dans le presse-papiers !");
+            gw->Toast("RocketMax", "Lien copie dans le presse-papiers !", "default", 3.0f);
         });
     }
 }

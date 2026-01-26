@@ -68,6 +68,70 @@ void RocketMax::RenderSettings() {
     ImGui::Separator();
     ImGui::Spacing();
 
+    // Privacy Section
+    ImGui::TextUnformatted("Confidentialite du profil");
+    ImGui::Spacing();
+
+    // Hide profile toggle
+    CVarWrapper hideCvar = cvarManager->getCvar("rocketmax_hide_profile");
+    if (hideCvar) {
+        bool hideEnabled = hideCvar.getBoolValue();
+        if (ImGui::Checkbox("Masquer mon profil public", &hideEnabled)) {
+            setProfileVisibility(hideEnabled);
+        }
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Si active, votre profil ne sera plus visible\ndans la liste publique. Utilisez le lien prive\npour partager votre profil.");
+        }
+    }
+
+    // Show profile link and actions only if profile is hidden
+    CVarWrapper profileUrlCvar = cvarManager->getCvar("rocketmax_profile_url");
+    CVarWrapper accessTokenCvar = cvarManager->getCvar("rocketmax_access_token");
+    bool isHidden = hideCvar && hideCvar.getBoolValue();
+
+    if (isHidden && profileUrlCvar && !profileUrlCvar.getStringValue().empty()) {
+        ImGui::Spacing();
+        ImGui::TextUnformatted("Lien prive:");
+
+        // Display truncated URL
+        std::string fullUrl = profileUrlCvar.getStringValue();
+        std::string displayUrl = fullUrl;
+        if (displayUrl.length() > 50) {
+            displayUrl = displayUrl.substr(0, 47) + "...";
+        }
+        ImGui::TextColored(ImVec4(0.4f, 0.7f, 1.0f, 1.0f), "%s", displayUrl.c_str());
+
+        ImGui::Spacing();
+
+        // Copy link button
+        if (ImGui::Button("Copier le lien")) {
+            copyProfileLinkToClipboard();
+        }
+
+        ImGui::SameLine();
+
+        // Regenerate token button
+        if (ImGui::Button("Regenerer le lien")) {
+            regenerateAccessToken();
+        }
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("Genere un nouveau lien prive.\nL'ancien lien ne fonctionnera plus.");
+        }
+    }
+    else if (!isHidden) {
+        ImGui::Spacing();
+        ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), "Votre profil est public");
+
+        // Copy public link button
+        if (ImGui::Button("Copier le lien public")) {
+            copyProfileLinkToClipboard();
+        }
+    }
+
+    ImGui::Spacing();
+    ImGui::Separator();
+    ImGui::Spacing();
+
     // Update Section
     ImGui::TextUnformatted("Mises a jour");
     ImGui::Spacing();

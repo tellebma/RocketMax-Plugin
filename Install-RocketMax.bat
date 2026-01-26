@@ -8,12 +8,17 @@
 
 title RocketMax - Installation
 
-:: Lancer le script PowerShell avec les bonnes permissions
-powershell -ExecutionPolicy Bypass -File "%~dp0install-rocketmax.ps1"
-
-:: Si PowerShell n'est pas disponible localement, essayer depuis le web
-if %ERRORLEVEL% NEQ 0 (
-    echo.
-    echo Tentative d'installation depuis le web...
-    powershell -ExecutionPolicy Bypass -Command "& { iwr -useb https://raw.githubusercontent.com/tellebma/RocketMax-Plugin/main/install-rocketmax.ps1 | iex }"
+:: Verifier si le script PowerShell local existe
+if exist "%~dp0install-rocketmax.ps1" (
+    echo Lancement de l'installation locale...
+    powershell -ExecutionPolicy Bypass -File "%~dp0install-rocketmax.ps1"
+    goto :end
 )
+
+:: Script local non trouve, telecharger depuis GitHub
+echo.
+echo Script local non trouve, telechargement depuis GitHub...
+echo.
+powershell -ExecutionPolicy Bypass -Command "& { try { iwr -useb https://raw.githubusercontent.com/tellebma/RocketMax-Plugin/main/install-rocketmax.ps1 | iex } catch { Write-Host 'Erreur: ' $_.Exception.Message -ForegroundColor Red; Read-Host 'Appuyez sur Entree pour quitter'; exit 1 } }"
+
+:end

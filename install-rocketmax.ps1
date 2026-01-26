@@ -12,6 +12,7 @@ $repoOwner = "tellebma"
 $repoName = "RocketMax-Plugin"
 $pluginName = "RocketMax"
 $dllName = "RocketMax.dll"
+$versionFileName = ".rocketmax-version"
 
 Write-Host ""
 Write-Host "========================================" -ForegroundColor Cyan
@@ -20,7 +21,7 @@ Write-Host "========================================" -ForegroundColor Cyan
 Write-Host ""
 
 # 1. Recuperer la derniere release depuis GitHub
-Write-Host "[1/4] Recherche de la derniere version..." -ForegroundColor Yellow
+Write-Host "[1/5] Recherche de la derniere version..." -ForegroundColor Yellow
 try {
     $releaseUrl = "https://api.github.com/repos/$repoOwner/$repoName/releases/latest"
     $release = Invoke-RestMethod -Uri $releaseUrl -Headers @{ "User-Agent" = "PowerShell" }
@@ -36,7 +37,6 @@ try {
     }
 
     Write-Host "  Version disponible: $latestVersion" -ForegroundColor Green
-    Write-Host "  URL: $downloadUrl" -ForegroundColor Gray
 }
 catch {
     Write-Host "  ERREUR: Impossible de contacter GitHub" -ForegroundColor Red
@@ -47,7 +47,7 @@ catch {
 
 # 2. Trouver le dossier BakkesMod
 Write-Host ""
-Write-Host "[2/4] Detection du dossier BakkesMod..." -ForegroundColor Yellow
+Write-Host "[2/5] Detection du dossier BakkesMod..." -ForegroundColor Yellow
 $defaultBakkesmodFolder = "$env:APPDATA\bakkesmod\bakkesmod"
 
 if (Test-Path -Path $defaultBakkesmodFolder) {
@@ -79,6 +79,7 @@ else {
 $pluginsFolder = Join-Path $bakkesmodFolder "plugins"
 $pluginPath = Join-Path $pluginsFolder $dllName
 $pluginCfg = Join-Path $bakkesmodFolder "cfg\plugins.cfg"
+$versionFilePath = Join-Path $pluginsFolder $versionFileName
 
 # Creer le dossier plugins si necessaire
 if (-not (Test-Path -Path $pluginsFolder)) {
@@ -86,16 +87,47 @@ if (-not (Test-Path -Path $pluginsFolder)) {
     Write-Host "  Dossier plugins cree" -ForegroundColor Gray
 }
 
-# 3. Verifier si une version est deja installee
+# 3. Verifier si une version est deja installee et comparer
 Write-Host ""
-Write-Host "[3/4] Verification de l'installation existante..." -ForegroundColor Yellow
+Write-Host "[3/5] Verification de l'installation existante..." -ForegroundColor Yellow
 
 $isUpdate = $false
+$installedVersion = $null
+$needsUpdate = $true
+
 if (Test-Path $pluginPath) {
     $isUpdate = $true
-    $existingSize = (Get-Item $pluginPath).Length
-    Write-Host "  Plugin existant detecte (taille: $existingSize octets)" -ForegroundColor Yellow
-    Write-Host "  -> Mise a jour vers $latestVersion" -ForegroundColor Cyan
+
+    # Lire la version installee depuis le fichier .rocketmax-version
+    if (Test-Path $versionFilePath) {
+        $installedVersion = (Get-Content $versionFilePath -Raw).Trim()
+        Write-Host "  Version installee: $installedVersion" -ForegroundColor Cyan
+
+        if ($installedVersion -eq $latestVersion) {
+            Write-Host "  Vous avez deja la derniere version!" -ForegroundColor Green
+            Write-Host ""
+            $response = Read-Host "  Voulez-vous reinstaller quand meme? (o/N)"
+            if ($response -notmatch "^[oOyY]") {
+                Write-Host ""
+                Write-Host "========================================" -ForegroundColor Cyan
+                Write-Host "   Aucune mise a jour necessaire" -ForegroundColor Green
+                Write-Host "========================================" -ForegroundColor Cyan
+                Write-Host ""
+                Read-Host "Appuyez sur Entree pour fermer"
+                exit 0
+            }
+            $needsUpdate = $true
+        }
+        else {
+            Write-Host "  -> Mise a jour disponible: $installedVersion -> $latestVersion" -ForegroundColor Yellow
+        }
+    }
+    else {
+        $existingSize = (Get-Item $pluginPath).Length
+        Write-Host "  Plugin existant detecte (taille: $existingSize octets)" -ForegroundColor Yellow
+        Write-Host "  Version installee: inconnue (fichier de version absent)" -ForegroundColor Gray
+        Write-Host "  -> Mise a jour vers $latestVersion" -ForegroundColor Cyan
+    }
 }
 else {
     Write-Host "  Aucune installation existante" -ForegroundColor Gray
@@ -104,7 +136,7 @@ else {
 
 # 4. Telecharger et installer
 Write-Host ""
-Write-Host "[4/4] Telechargement et installation..." -ForegroundColor Yellow
+Write-Host "[4/5] Telechargement et installation..." -ForegroundColor Yellow
 
 try {
     # Telecharger dans un fichier temporaire d'abord
@@ -123,6 +155,10 @@ try {
         # Deplacer vers le dossier plugins (ecrase si existant)
         Move-Item -Path $tempFile -Destination $pluginPath -Force
         Write-Host "  Plugin installe: $pluginPath" -ForegroundColor Green
+
+        # Sauvegarder la version installee
+        Set-Content -Path $versionFilePath -Value $latestVersion -NoNewline
+        Write-Host "  Version enregistree: $versionFilePath" -ForegroundColor Gray
     }
     else {
         throw "Le fichier telecharge est introuvable"
@@ -191,3 +227,4 @@ Write-Host "Site web: https://rocketmax.tellebma.fr/" -ForegroundColor Cyan
 Write-Host ""
 
 Read-Host "Appuyez sur Entree pour fermer"
+exit 0

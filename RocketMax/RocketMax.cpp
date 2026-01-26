@@ -313,7 +313,7 @@ bool RocketMax::sendMmrUpdate(long long timestamp)
 
     sendAuthenticatedRequest("/updateMmr", body, [this](int code, std::string result)
     {
-        LOG("Json result: " + result);
+        LOG("Json result: " + escapeForLog(result));
         if (code == 200) {
             LOG("[RocketMax] [sendMmrUpdate] DATA SENT");
         }
@@ -354,12 +354,12 @@ bool RocketMax::initAPI()
     req.headers["Content-Type"] = "application/json";
 
     LOG("[RocketMax] [InitAPI] URL: " + req.url);
-    LOG("[RocketMax] [InitAPI] Body: " + req.body);
+    LOG("[RocketMax] [InitAPI] Body: " + escapeForLog(req.body));
 
     HttpWrapper::SendCurlRequest(req, [this](int code, std::string result)
         {
             LOG("[RocketMax] [InitAPI] Response code: " + std::to_string(code));
-            LOG("[RocketMax] [InitAPI] Response: " + result);
+            LOG("[RocketMax] [InitAPI] Response: " + escapeForLog(result));
 
             if (code == 200) {
                 LOG("[RocketMax] [InitAPI] DATA SENT");
@@ -516,7 +516,7 @@ bool RocketMax::sendHistoriqueGame(long long timestamp)
 
     sendAuthenticatedRequest("/updateHistorique", requestBody, [this, mmr_display, mmr_diff, requestBody](int code, std::string result)
         {
-            LOG("Json result: " + result);
+            LOG("Json result: " + escapeForLog(result));
             if (code == 200) {
                 LOG("[RocketMax] [sendHistoriqueGame] DATA SENT");
                 if (*cvar_enable_toasts) {
@@ -704,6 +704,19 @@ std::filesystem::path RocketMax::getPluginsFolder()
 std::filesystem::path RocketMax::getUpdateScriptPath()
 {
     return gameWrapper->GetDataFolder() / "rocketmax_update.ps1";
+}
+
+// Helper function to escape curly braces for logging (std::format uses {} as placeholders)
+std::string escapeForLog(const std::string& str)
+{
+    std::string result;
+    result.reserve(str.size() * 2);
+    for (char c : str) {
+        if (c == '{') result += "{{";
+        else if (c == '}') result += "}}";
+        else result += c;
+    }
+    return result;
 }
 
 std::string RocketMax::extractJsonValue(const std::string& json, const std::string& key)
@@ -1096,7 +1109,7 @@ void RocketMax::sendAuthenticatedRequest(const std::string& endpoint, const std:
     LOG("[RocketMax] [Auth] === Sending authenticated request ===");
     LOG("[RocketMax] [Auth] Endpoint: " + endpoint);
     LOG("[RocketMax] [Auth] Body length: " + std::to_string(body.length()));
-    LOG("[RocketMax] [Auth] Body: " + body.substr(0, 200) + (body.length() > 200 ? "..." : ""));
+    LOG("[RocketMax] [Auth] Body: " + escapeForLog(body.substr(0, 200)) + (body.length() > 200 ? "..." : ""));
 
     std::string signature = "";
 
@@ -1130,7 +1143,7 @@ void RocketMax::sendAuthenticatedRequest(const std::string& endpoint, const std:
 
     HttpWrapper::SendCurlRequest(req, [this, callback](int code, std::string result) {
         LOG("[RocketMax] [Auth] Response code: " + std::to_string(code));
-        LOG("[RocketMax] [Auth] Response body: " + result);
+        LOG("[RocketMax] [Auth] Response body: " + escapeForLog(result));
         callback(code, result);
     });
 }
@@ -1142,7 +1155,7 @@ void RocketMax::setProfileVisibility(bool hidden)
     std::string body = R"({"is_hidden": )" + std::string(hidden ? "true" : "false") + "}";
 
     sendAuthenticatedRequest("/setVisibility", body, [this, hidden](int code, std::string result) {
-        LOG("[RocketMax] [Privacy] setVisibility response: " + result);
+        LOG("[RocketMax] [Privacy] setVisibility response: " + escapeForLog(result));
 
         if (code == 200) {
             // Update local CVars
@@ -1187,7 +1200,7 @@ void RocketMax::regenerateAccessToken()
     LOG("[RocketMax] [Privacy] Regenerating access token...");
 
     sendAuthenticatedRequest("/regenerateAccessToken", "{}", [this](int code, std::string result) {
-        LOG("[RocketMax] [Privacy] regenerateAccessToken response: " + result);
+        LOG("[RocketMax] [Privacy] regenerateAccessToken response: " + escapeForLog(result));
 
         if (code == 200) {
             std::string token = extractJsonValue(result, "access_token");

@@ -136,6 +136,15 @@ void RocketMax::RenderSettings() {
     ImGui::TextUnformatted("Mises a jour");
     ImGui::Spacing();
 
+    // Thread-safe access to update strings for display
+    std::string display_version;
+    std::string display_error;
+    {
+        std::lock_guard<std::mutex> lock(update_mutex);
+        display_version = latest_version;
+        display_error = update_error;
+    }
+
     if (update_checking.load()) {
         ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.0f, 1.0f), "Verification en cours...");
     }
@@ -144,12 +153,12 @@ void RocketMax::RenderSettings() {
         ImGui::TextUnformatted("Le script de mise a jour a ete lance.");
         ImGui::TextUnformatted("Redemarrez Rocket League une fois termine.");
         ImGui::Spacing();
-        ImGui::TextUnformatted(("Nouvelle version: " + latest_version).c_str());
+        ImGui::TextUnformatted(("Nouvelle version: " + display_version).c_str());
     }
     else if (update_available.load()) {
         ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.0f, 1.0f), "Nouvelle version disponible !");
         ImGui::TextUnformatted(("Version actuelle: " + std::string(plugin_version)).c_str());
-        ImGui::TextUnformatted(("Nouvelle version: " + latest_version).c_str());
+        ImGui::TextUnformatted(("Nouvelle version: " + display_version).c_str());
         ImGui::Spacing();
 
         if (ImGui::Button("Installer la mise a jour")) {
@@ -166,9 +175,9 @@ void RocketMax::RenderSettings() {
         }
     }
 
-    if (!update_error.empty()) {
+    if (!display_error.empty()) {
         ImGui::Spacing();
-        ImGui::TextColored(ImVec4(1.0f, 0.0f, 0.0f, 1.0f), ("Erreur: " + update_error).c_str());
+        ImGui::TextColored(ImVec4(1.0f, 0.0f, 0.0f, 1.0f), ("Erreur: " + display_error).c_str());
     }
 
     ImGui::Spacing();

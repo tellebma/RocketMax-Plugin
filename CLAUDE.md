@@ -136,17 +136,28 @@ chore: maintenance                  → pas de release
 
 ### Thread Safety
 - Les callbacks HTTP sont asynchrones - utiliser `gameWrapper->Execute()` pour le UI
-- Seuls les `std::atomic<bool>` sont thread-safe (`update_available`, etc.)
-- `latest_version`, `update_download_url`, `update_error` NE SONT PAS thread-safe
+- Les `std::atomic<bool>` sont utilisés pour les flags (`update_available`, etc.)
+- Les strings partagées (`latest_version`, `update_download_url`, `update_error`) sont protégées par `update_mutex`
 
 ### Capture de variables dans lambdas
 ```cpp
-// DANGER: capture par référence avec timeout
-gameWrapper->SetTimeout([&](GameWrapper* gw) { ... }, 5.0F);  // Variables peuvent changer!
+// Pattern utilisé pour les timeouts (capture par valeur)
+int captured_playlistId = playlistId;
+int captured_mmr_avant = mmr_avant_match;
+gameWrapper->SetTimeout([this, captured_playlistId, captured_mmr_avant](GameWrapper* gw) {
+    // Utiliser les valeurs capturées, pas les membres
+}, MMR_UPDATE_DELAY_SECONDS);
+```
 
-// MIEUX: capturer par valeur les données nécessaires
-int captured_mmr = mmr_apres_match;
-gameWrapper->SetTimeout([captured_mmr](GameWrapper* gw) { ... }, 5.0F);
+### Constants Namespace
+Les constantes sont définies dans `RocketMaxConstants` :
+```cpp
+namespace RocketMaxConstants {
+    constexpr float MMR_UPDATE_DELAY_SECONDS = 5.0f;
+    constexpr float TOAST_DURATION_DEFAULT = 5.0f;
+    constexpr int INVALID_PLAYLIST_ID = 100;
+    constexpr int INVALID_TEAM_NUM = -1;
+}
 ```
 
 ### JSON Manual Parsing
@@ -170,19 +181,12 @@ Pour tester manuellement :
 4. Jouer un match ranked
 5. Vérifier les logs BakkesMod (F6 → Console)
 
-## Améliorations identifiées
+## Améliorations futures recommandées
 
-### Bugs critiques
-1. **Offline queue non fonctionnelle** : `processOfflineQueue()` ne réessaie pas les requêtes
-2. **Capture par référence dangereuse** : Lambda dans `gameEnd` avec `[&]`
-3. **Thread safety manquante** : Strings partagées entre threads sans protection
-
-### Améliorations recommandées
-1. Utiliser une vraie librairie JSON (nlohmann/json ou rapidjson)
-2. Implémenter la reprise des requêtes offline
-3. Encapsuler les CVars dans une structure dédiée
-4. Ajouter des tests unitaires
-5. Séparer la logique API dans une classe dédiée
+1. Utiliser une vraie librairie JSON (nlohmann/json ou rapidjson) pour un parsing plus robuste
+2. Encapsuler les CVars dans une structure dédiée
+3. Ajouter des tests unitaires
+4. Séparer la logique API dans une classe dédiée
 
 ## Ressources
 

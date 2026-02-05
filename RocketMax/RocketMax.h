@@ -7,7 +7,27 @@
 
 #include "version.h"
 #include <atomic>
+#include <mutex>
 #include <filesystem>
+
+// ============ CONSTANTS ============
+namespace RocketMaxConstants {
+    // Timing constants
+    constexpr float MMR_UPDATE_DELAY_SECONDS = 5.0f;
+    constexpr float TOAST_DURATION_DEFAULT = 5.0f;
+    constexpr float TOAST_DURATION_SHORT = 3.0f;
+    constexpr float TOAST_DURATION_LONG = 8.0f;
+
+    // Playlist constants
+    constexpr int INVALID_PLAYLIST_ID = 100;
+    constexpr int INVALID_TEAM_NUM = -1;
+
+    // Streak milestones for alerts
+    constexpr int STREAK_MILESTONES[] = {3, 5, 7, 10};
+
+    // File size validation (for update downloads)
+    constexpr size_t MIN_DLL_SIZE_BYTES = 102400; // 100KB minimum
+}
 
 constexpr auto plugin_version = stringify(VERSION_MAJOR) "." stringify(VERSION_MINOR) "." stringify(VERSION_PATCH) "." stringify(VERSION_BUILD);
 
@@ -21,7 +41,7 @@ class RocketMax: public BakkesMod::Plugin::BakkesModPlugin
 	void onUnload() override;
 
 	// setup
-	bool initAPI();
+	void initAPI();
 
 	//activate Trigger
 	void gameHasEnded();
@@ -32,10 +52,10 @@ class RocketMax: public BakkesMod::Plugin::BakkesModPlugin
 
 	// Usefull fonctions
 	int getMmrData(int gamemode);
-	int getCurentPlaylist();
+	int getCurrentPlaylist();
 	bool isRankedGame();
-	bool sendMmrUpdate(long long timestamp);
-	bool sendHistoriqueGame(long long timestamp);
+	void sendMmrUpdate(long long timestamp);
+	void sendHistoriqueGame(long long timestamp);
 	void collectMatchStats();
 
 	// Streak & Session tracking
@@ -72,16 +92,15 @@ class RocketMax: public BakkesMod::Plugin::BakkesModPlugin
 
 	// Vars used by prgm
 	bool pluginLoaded = false;
-	int game_running = 0;
-	int my_team_num = -1;
+	bool game_running = false;
+	int my_team_num = RocketMaxConstants::INVALID_TEAM_NUM;
 	std::string playerId = "";
 	std::string playerName = "";
 	UniqueIDWrapper playerIdWrapper;
-	bool mmr_player_updated = false;
 	int mmr_avant_match = 0;
 	int mmr_apres_match = 0;
 	int mmr_gagne = 0;
-	int playlistId = 100;
+	int playlistId = RocketMaxConstants::INVALID_PLAYLIST_ID;
 	bool victory = false;
 
 	// Stats individuelles du match
@@ -123,14 +142,15 @@ class RocketMax: public BakkesMod::Plugin::BakkesModPlugin
 	std::atomic<bool> update_available{false};
 	std::atomic<bool> update_checking{false};
 	std::atomic<bool> update_ready{false};
+
+	// Thread-safe strings for update info (protected by update_mutex)
+	mutable std::mutex update_mutex;
 	std::string latest_version = "";
 	std::string update_download_url = "";
 	std::string update_error = "";
 
 	// Overlay state
 	bool overlay_visible = true;
-
-	std::unique_ptr<MMRNotifierToken> notifierToken;
 
 public:
 	void RenderSettings() override;

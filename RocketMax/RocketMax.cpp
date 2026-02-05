@@ -3,7 +3,6 @@
 #include <iostream>
 #include <fstream>
 #include <sstream>
-#include "httplib.h"
 #include <map>
 #include <chrono>
 #include <cmath>
@@ -11,6 +10,9 @@
 #include <wincrypt.h>
 #pragma comment(lib, "Crypt32.lib")
 #pragma comment(lib, "Advapi32.lib")
+
+// Use constants namespace
+using namespace RocketMaxConstants;
 
 
 #define HOOK_MATCH_ENDED "Function TAGame.GameEvent_Soccar_TA.EventMatchEnded"
@@ -104,19 +106,14 @@ void RocketMax::onLoad()
         checkForUpdates();
     }
 
-    bool erreur = initAPI();
-    if (!erreur) {
-        gameWrapper->HookEvent(HOOK_MATCH_START, std::bind(&RocketMax::gameStart, this, std::placeholders::_1));
-        gameWrapper->HookEvent(HOOK_MATCH_ENDED, std::bind(&RocketMax::gameEnd, this, std::placeholders::_1));
-        pluginLoaded = true;
-        LOG("[RocketMax] Version " + std::string(plugin_version) + " loaded successfully");
-        return;
-    }
-    LOG("[RocketMax] ERREUR LORS DU CHARGEMENT DU PLUGIN (SERVEUR HS?!)");
-    LOG("[RocketMax] ERREUR LORS DU CHARGEMENT DU PLUGIN (SERVEUR HS?!)");
-    LOG("[RocketMax] ERREUR LORS DU CHARGEMENT DU PLUGIN (SERVEUR HS?!)");
-    LOG("[RocketMax] ERREUR LORS DU CHARGEMENT DU PLUGIN (SERVEUR HS?!)");
-    LOG("[RocketMax] ERREUR LORS DU CHARGEMENT DU PLUGIN (SERVEUR HS?!)");
+    // Initialize API connection (async)
+    initAPI();
+
+    // Hook game events regardless of API status (offline mode support)
+    gameWrapper->HookEvent(HOOK_MATCH_START, std::bind(&RocketMax::gameStart, this, std::placeholders::_1));
+    gameWrapper->HookEvent(HOOK_MATCH_ENDED, std::bind(&RocketMax::gameEnd, this, std::placeholders::_1));
+    pluginLoaded = true;
+    LOG("[RocketMax] Version " + std::string(plugin_version) + " loaded successfully");
 }
 
 void RocketMax::onUnload()
@@ -140,14 +137,13 @@ void RocketMax::gameHasEnded()
     // Update streak tracking (before resetting victory)
     updateStreak(victory);
 
-    //gameWrapper->HookEvent(HOOK_MATCH_START, std::bind(&RocketMax::gameStart, this, std::placeholders::_1));
-    game_running = 0;
-    mmr_player_updated = false;
-    my_team_num = -1;
+    // Reset game state
+    game_running = false;
+    my_team_num = INVALID_TEAM_NUM;
     mmr_avant_match = 0;
     mmr_apres_match = 0;
     mmr_gagne = 0;
-    playlistId = 100;
+    playlistId = INVALID_PLAYLIST_ID;
     victory = false;
 
     // Réinitialiser les stats de match
@@ -161,8 +157,6 @@ void RocketMax::gameHasEnded()
     team_score = 0;
     opponent_score = 0;
     overtime = false;
-
-    return;
 }
 
 
@@ -282,15 +276,15 @@ void RocketMax::collectMatchStats()
     LOG("[RocketMax] [collectMatchStats] MVP: " + std::to_string(match_mvp));
 }
 
-int RocketMax::getCurentPlaylist()
+int RocketMax::getCurrentPlaylist()
 {
     ServerWrapper sw = gameWrapper->GetCurrentGameState();
     if (!sw) return -1;
     GameSettingPlaylistWrapper playlist = sw.GetPlaylist();
     if (!playlist) return -1;
-    int playlistId = playlist.GetPlaylistId();
-    LOG("[RocketMax] [getCurentPlaylist] playlistId: " + std::to_string(playlistId)+ " - Gamemode: " + gameModes[playlistId]);
-    return playlistId;
+    int currentPlaylistId = playlist.GetPlaylistId();
+    LOG("[RocketMax] [getCurrentPlaylist] playlistId: " + std::to_string(currentPlaylistId) + " - Gamemode: " + gameModes[currentPlaylistId]);
+    return currentPlaylistId;
 }
 
 bool RocketMax::isRankedGame()
@@ -298,7 +292,7 @@ bool RocketMax::isRankedGame()
     return gameWrapper->IsInOnlineGame() && !gameWrapper->IsInReplay() && !gameWrapper->IsInFreeplay();
 }
 
-bool RocketMax::sendMmrUpdate(long long timestamp)
+void RocketMax::sendMmrUpdate(long long timestamp)
 {
     LOG("[RocketMax] [sendMmrUpdate] -- SENDING DATA --");
     LOG("[RocketMax] [sendMmrUpdate]  Player ID     :" + playerId);
@@ -325,10 +319,9 @@ bool RocketMax::sendMmrUpdate(long long timestamp)
             LOG("[RocketMax] [sendMmrUpdate] ERROR DATA NOT SENT");
         }
     });
-    return false;
 }
 
-bool RocketMax::initAPI()
+void RocketMax::initAPI()
 {
     // Obtenez l'identifiant unique du joueur sous forme de chaine
     playerIdWrapper = gameWrapper->GetUniqueID();
@@ -371,8 +364,8 @@ bool RocketMax::initAPI()
                 }
                 else {
                     // Check if we have a locally stored auth_secret
-                    std::string localSecret = *cvar_auth_secret;
-                    if (localSecret.empty()) {
+                    std::string storedSecret = *cvar_auth_secret;
+                    if (storedSecret.empty()) {
                         LOG("[RocketMax] [InitAPI] WARNING: No auth_secret from server and none stored locally!");
                     }
                     else {
@@ -396,44 +389,43 @@ bool RocketMax::initAPI()
 
                 gameWrapper->Execute([this](GameWrapper* gw) {
                     std::string toastMsg = "Plugin v" + std::string(plugin_version) + " connecte et pret !";
-                    gw->Toast("RocketMax", toastMsg, "default", 5.0f);
+                    gw->Toast("RocketMax", toastMsg, "default", TOAST_DURATION_DEFAULT);
                 });
             }
             else {
                 LOG("[RocketMax] [InitAPI] ERROR - HTTP " + std::to_string(code));
                 gameWrapper->Execute([this](GameWrapper* gw) {
-                    gw->Toast("RocketMax", "Erreur de connexion au serveur", "default", 5.0f);
+                    gw->Toast("RocketMax", "Erreur de connexion au serveur", "default", TOAST_DURATION_DEFAULT);
                 });
             }
         });
-    return false;
 }
 
 
 void RocketMax::gameStart(std::string eventName)
 {
-    if (game_running == 1)return;
-    if (!isRankedGame())return;
-    playlistId = getCurentPlaylist();
-    if (playlistId == -1)return;
+    if (game_running) return;
+    if (!isRankedGame()) return;
+    playlistId = getCurrentPlaylist();
+    if (playlistId == -1) return;
     LOG("===== GameStart =====");
     LOG("MODE DE JEU :" + gameModes[playlistId]);
-    
+
     CarWrapper me = gameWrapper->GetLocalCar();
-    if (me.IsNull())return;
+    if (me.IsNull()) return;
 
     PriWrapper mePRI = me.GetPRI();
-    if (mePRI.IsNull())return;
+    if (mePRI.IsNull()) return;
 
     TeamInfoWrapper myTeam = mePRI.GetTeam();
-    if (myTeam.IsNull())return;
+    if (myTeam.IsNull()) return;
 
     // Get TeamNum
     my_team_num = myTeam.GetTeamNum();
 
     mmr_avant_match = getMmrData(playlistId);
 
-    game_running = 1;
+    game_running = true;
     LOG("===== !GameStart =====");
 }
 
@@ -441,19 +433,19 @@ void RocketMax::gameStart(std::string eventName)
 
 void RocketMax::gameEnd(std::string eventName)
 {
-    if (game_running != 1)return;
-    
-    game_running = 0;
+    if (!game_running) return;
+
+    game_running = false;
     LOG("GameEnd => is_online_game: yes my_team_num:" + std::to_string(my_team_num));
-    
-    if (my_team_num != -1)
+
+    if (my_team_num != INVALID_TEAM_NUM)
     {
         LOG("===== GameEnd =====");
         ServerWrapper server = gameWrapper->GetOnlineGame();
         TeamWrapper winningTeam = server.GetGameWinner();
-        if (winningTeam.IsNull())return;
+        if (winningTeam.IsNull()) return;
         int win_team_num = winningTeam.GetTeamNum();
-        
+
         LOG("GameEnd => my_team_num:" + std::to_string(my_team_num) + " GetTeamNum:" + std::to_string(win_team_num));
         if (my_team_num == win_team_num)
         {
@@ -471,19 +463,24 @@ void RocketMax::gameEnd(std::string eventName)
         collectMatchStats();
         LOG("[RocketMax] [gameEnd] Stats collected, setting timeout for MMR update...");
 
-        gameWrapper->SetTimeout([&](GameWrapper* gameWrapper) { 
-            mmr_apres_match = getMmrData(playlistId);
-            mmr_gagne = mmr_apres_match - mmr_avant_match;
-            LOG("MMR AVANT :" + std::to_string(mmr_avant_match));
+        // IMPORTANT: Capture by value to avoid dangling references
+        // The timeout callback runs 5 seconds later, so captured references could be invalid
+        int captured_playlistId = playlistId;
+        int captured_mmr_avant = mmr_avant_match;
+
+        gameWrapper->SetTimeout([this, captured_playlistId, captured_mmr_avant](GameWrapper* gw) {
+            mmr_apres_match = getMmrData(captured_playlistId);
+            mmr_gagne = mmr_apres_match - captured_mmr_avant;
+            LOG("MMR AVANT :" + std::to_string(captured_mmr_avant));
             LOG("MMR APRES :" + std::to_string(mmr_apres_match));
-            LOG("MMR WON :"+std::to_string(mmr_gagne));
+            LOG("MMR WON :" + std::to_string(mmr_gagne));
             gameHasEnded();
-        }, 5.0F);
+        }, MMR_UPDATE_DELAY_SECONDS);
         LOG("===== !GameEnd =====");
     }
 }
 
-bool RocketMax::sendHistoriqueGame(long long timestamp)
+void RocketMax::sendHistoriqueGame(long long timestamp)
 {
     LOG("[RocketMax] [sendHistoriqueGame]  MMR GAGNE     :" + std::to_string(mmr_gagne));
     LOG("[RocketMax] [sendHistoriqueGame]  victory ?     :" + std::to_string(victory));
@@ -520,7 +517,7 @@ bool RocketMax::sendHistoriqueGame(long long timestamp)
                 if (*cvar_enable_toasts) {
                     gameWrapper->Execute([this, mmr_display, mmr_diff](GameWrapper* gw) {
                         std::string toastMsg = "Donnees envoyees ! MMR: " + std::to_string(mmr_display) + " (" + (mmr_diff >= 0 ? "+" : "") + std::to_string(mmr_diff) + ")";
-                        gw->Toast("RocketMax", toastMsg, "default", 5.0f);
+                        gw->Toast("RocketMax", toastMsg, "default", TOAST_DURATION_DEFAULT);
                     });
                 }
             }
@@ -528,7 +525,7 @@ bool RocketMax::sendHistoriqueGame(long long timestamp)
                 LOG("[RocketMax] [sendHistoriqueGame] AUTHENTICATION FAILED");
                 if (*cvar_enable_toasts) {
                     gameWrapper->Execute([this](GameWrapper* gw) {
-                        gw->Toast("RocketMax", "Erreur d'authentification", "default", 5.0f);
+                        gw->Toast("RocketMax", "Erreur d'authentification", "default", TOAST_DURATION_DEFAULT);
                     });
                 }
             }
@@ -538,12 +535,11 @@ bool RocketMax::sendHistoriqueGame(long long timestamp)
                 saveToOfflineQueue("/updateHistorique", requestBody);
                 if (*cvar_enable_toasts) {
                     gameWrapper->Execute([this](GameWrapper* gw) {
-                        gw->Toast("RocketMax", "Hors ligne - donnees sauvegardees", "default", 5.0f);
+                        gw->Toast("RocketMax", "Hors ligne - donnees sauvegardees", "default", TOAST_DURATION_DEFAULT);
                     });
                 }
             }
         });
-    return false;
 }
 
 // ============ STREAK TRACKING ============
@@ -599,10 +595,10 @@ void RocketMax::showStreakToast()
         std::string msg;
         if (current_streak > 0) {
             msg = "Win Streak: " + std::to_string(current_streak) + " victoires !";
-            gw->Toast("RocketMax", msg, "default", 5.0f);
+            gw->Toast("RocketMax", msg, "default", TOAST_DURATION_DEFAULT);
         } else {
             msg = "Lose Streak: " + std::to_string(std::abs(current_streak)) + " defaites...";
-            gw->Toast("RocketMax", msg, "default", 5.0f);
+            gw->Toast("RocketMax", msg, "default", TOAST_DURATION_DEFAULT);
         }
     });
 }
@@ -627,6 +623,9 @@ void RocketMax::saveToOfflineQueue(const std::string& endpoint, const std::strin
         buffer << infile.rdbuf();
         content = buffer.str();
         infile.close();
+        if (infile.fail() && !infile.eof()) {
+            LOG("[RocketMax] [OfflineQueue] WARNING: Error reading existing queue file");
+        }
     }
 
     // Parse or create array
@@ -642,14 +641,21 @@ void RocketMax::saveToOfflineQueue(const std::string& endpoint, const std::strin
         }
     }
 
-    // Write back
+    // Write back with proper error handling
     std::ofstream outfile(filepath);
     if (outfile.is_open()) {
         outfile << content;
+        outfile.flush();
+        bool write_success = outfile.good();
         outfile.close();
-        LOG("[RocketMax] [OfflineQueue] Saved successfully");
+
+        if (write_success) {
+            LOG("[RocketMax] [OfflineQueue] Saved successfully");
+        } else {
+            LOG("[RocketMax] [OfflineQueue] ERROR: Write operation failed");
+        }
     } else {
-        LOG("[RocketMax] [OfflineQueue] ERROR: Could not write file");
+        LOG("[RocketMax] [OfflineQueue] ERROR: Could not open file for writing");
     }
 }
 
@@ -675,14 +681,81 @@ void RocketMax::processOfflineQueue()
 
     LOG("[RocketMax] [OfflineQueue] Processing offline queue...");
 
-    // Clear the file first (we'll re-add failed ones)
+    // Clear the file first (we'll re-add failed ones via saveToOfflineQueue callback)
     std::ofstream clearFile(filepath);
-    clearFile << "[]";
-    clearFile.close();
+    if (clearFile.is_open()) {
+        clearFile << "[]";
+        clearFile.close();
+    }
 
-    // Note: In a real implementation, you'd parse the JSON and retry each request
-    // For now, we just log that we found pending items
-    LOG("[RocketMax] [OfflineQueue] Found pending items - will retry on next connection");
+    // Parse and process each queue entry
+    // Format: [{"endpoint":"...", "body":{...}}, ...]
+    size_t searchPos = 0;
+    int processedCount = 0;
+
+    while (searchPos < content.length()) {
+        // Find the start of an entry
+        size_t entryStart = content.find(R"({"endpoint":")", searchPos);
+        if (entryStart == std::string::npos) break;
+
+        // Extract endpoint
+        size_t endpointStart = entryStart + 13; // Length of {"endpoint":"
+        size_t endpointEnd = content.find('"', endpointStart);
+        if (endpointEnd == std::string::npos) break;
+
+        std::string endpoint = content.substr(endpointStart, endpointEnd - endpointStart);
+
+        // Find the body
+        size_t bodyStart = content.find(R"("body":)", endpointEnd);
+        if (bodyStart == std::string::npos) break;
+        bodyStart += 7; // Length of "body":
+
+        // Find the end of the body (matching closing brace)
+        int braceCount = 0;
+        size_t bodyEnd = bodyStart;
+        bool inString = false;
+
+        for (size_t i = bodyStart; i < content.length(); i++) {
+            char c = content[i];
+
+            // Handle string escaping
+            if (c == '"' && (i == 0 || content[i-1] != '\\')) {
+                inString = !inString;
+            }
+
+            if (!inString) {
+                if (c == '{') braceCount++;
+                else if (c == '}') {
+                    braceCount--;
+                    if (braceCount == 0) {
+                        bodyEnd = i + 1;
+                        break;
+                    }
+                }
+            }
+        }
+
+        if (bodyEnd > bodyStart) {
+            std::string body = content.substr(bodyStart, bodyEnd - bodyStart);
+            LOG("[RocketMax] [OfflineQueue] Retrying: " + endpoint);
+
+            // Retry the request (failures will be re-queued by the callback)
+            sendAuthenticatedRequest(endpoint, body, [this, endpoint](int code, std::string result) {
+                if (code == 200) {
+                    LOG("[RocketMax] [OfflineQueue] Successfully retried: " + endpoint);
+                } else {
+                    LOG("[RocketMax] [OfflineQueue] Retry failed for: " + endpoint + " (code " + std::to_string(code) + ")");
+                    // Note: The original sendAuthenticatedRequest callbacks will handle re-queueing
+                }
+            });
+
+            processedCount++;
+        }
+
+        searchPos = bodyEnd;
+    }
+
+    LOG("[RocketMax] [OfflineQueue] Processed " + std::to_string(processedCount) + " queued items");
 }
 
 // ============ AUTO-UPDATE ============
@@ -820,7 +893,10 @@ void RocketMax::checkForUpdates()
     }
 
     update_checking.store(true);
-    update_error = "";
+    {
+        std::lock_guard<std::mutex> lock(update_mutex);
+        update_error = "";
+    }
     LOG("[RocketMax] [Update] Checking for updates...");
 
     CurlRequest req;
@@ -833,6 +909,7 @@ void RocketMax::checkForUpdates()
 
         if (code != 200) {
             LOG("[RocketMax] [Update] Failed to check for updates. HTTP code: " + std::to_string(code));
+            std::lock_guard<std::mutex> lock(update_mutex);
             update_error = "Erreur de connexion (code " + std::to_string(code) + ")";
             return;
         }
@@ -840,15 +917,17 @@ void RocketMax::checkForUpdates()
         LOG("[RocketMax] [Update] Received response from GitHub API");
 
         // Extract tag_name using helper function
-        latest_version = extractJsonValue(result, "tag_name");
-        if (latest_version.empty()) {
+        std::string version = extractJsonValue(result, "tag_name");
+        if (version.empty()) {
             LOG("[RocketMax] [Update] Could not find tag_name in response");
+            std::lock_guard<std::mutex> lock(update_mutex);
             update_error = "Format de reponse invalide";
             return;
         }
-        LOG("[RocketMax] [Update] Latest version: " + latest_version);
+        LOG("[RocketMax] [Update] Latest version: " + version);
 
         // Find download URL for RocketMax.dll in assets array
+        std::string downloadUrl = "";
         std::string dllName = "RocketMax.dll";
         size_t dllPos = result.find(dllName);
         if (dllPos != std::string::npos) {
@@ -859,21 +938,28 @@ void RocketMax::checkForUpdates()
                 size_t quoteStart = result.find("\"", colonPos + 1);
                 size_t quoteEnd = result.find("\"", quoteStart + 1);
                 if (quoteStart != std::string::npos && quoteEnd != std::string::npos) {
-                    update_download_url = result.substr(quoteStart + 1, quoteEnd - quoteStart - 1);
-                    LOG("[RocketMax] [Update] Download URL: " + update_download_url);
+                    downloadUrl = result.substr(quoteStart + 1, quoteEnd - quoteStart - 1);
+                    LOG("[RocketMax] [Update] Download URL: " + downloadUrl);
                 }
             }
         }
 
-        // Check if this is a newer version
-        if (isNewerVersion(latest_version)) {
-            update_available.store(true);
-            LOG("[RocketMax] [Update] New version available: " + latest_version);
+        // Update shared strings with mutex protection
+        {
+            std::lock_guard<std::mutex> lock(update_mutex);
+            latest_version = version;
+            update_download_url = downloadUrl;
+        }
 
-            gameWrapper->Execute([this](GameWrapper* gw) {
+        // Check if this is a newer version
+        if (isNewerVersion(version)) {
+            update_available.store(true);
+            LOG("[RocketMax] [Update] New version available: " + version);
+
+            gameWrapper->Execute([this, version](GameWrapper* gw) {
                 if (*cvar_enable_toasts) {
-                    std::string msg = "Nouvelle version disponible: " + latest_version;
-                    gw->Toast("RocketMax Update", msg, "default", 8.0f);
+                    std::string msg = "Nouvelle version disponible: " + version;
+                    gw->Toast("RocketMax Update", msg, "default", TOAST_DURATION_LONG);
                 }
             });
         }
@@ -886,13 +972,26 @@ void RocketMax::checkForUpdates()
 
 void RocketMax::launchUpdateScript()
 {
-    if (update_download_url.empty()) {
+    // Thread-safe access to shared strings
+    std::string downloadUrl;
+    std::string version;
+    {
+        std::lock_guard<std::mutex> lock(update_mutex);
+        downloadUrl = update_download_url;
+        version = latest_version;
+    }
+
+    if (downloadUrl.empty()) {
+        std::lock_guard<std::mutex> lock(update_mutex);
         update_error = "URL de telechargement non disponible";
         LOG("[RocketMax] [Update] No download URL available");
         return;
     }
 
-    update_error = "";
+    {
+        std::lock_guard<std::mutex> lock(update_mutex);
+        update_error = "";
+    }
     LOG("[RocketMax] [Update] Creating update script...");
 
     // Get paths
@@ -907,6 +1006,7 @@ void RocketMax::launchUpdateScript()
     // 4. Clean up
     std::ofstream scriptFile(scriptPath);
     if (!scriptFile.is_open()) {
+        std::lock_guard<std::mutex> lock(update_mutex);
         update_error = "Impossible de creer le script";
         LOG("[RocketMax] [Update] Could not create update script: " + scriptPath.string());
         return;
@@ -916,9 +1016,9 @@ void RocketMax::launchUpdateScript()
     scriptFile << "# Generated by RocketMax Plugin v" << plugin_version << "\n";
     scriptFile << "$ErrorActionPreference = 'Stop'\n\n";
 
-    scriptFile << "$downloadUrl = '" << update_download_url << "'\n";
+    scriptFile << "$downloadUrl = '" << downloadUrl << "'\n";
     scriptFile << "$pluginPath = '" << pluginPath.string() << "'\n";
-    scriptFile << "$tempPath = '" << (pluginsFolder / ("RocketMax_" + latest_version + ".dll")).string() << "'\n";
+    scriptFile << "$tempPath = '" << (pluginsFolder / ("RocketMax_" + version + ".dll")).string() << "'\n";
     scriptFile << "$backupPath = '" << (pluginsFolder / "RocketMax_backup.dll").string() << "'\n\n";
 
     scriptFile << "Write-Host 'RocketMax Update Script' -ForegroundColor Cyan\n";
@@ -971,7 +1071,17 @@ void RocketMax::launchUpdateScript()
     scriptFile << "Write-Host 'Press any key to close...'\n";
     scriptFile << "$null = $Host.UI.RawUI.ReadKey('NoEcho,IncludeKeyDown')\n";
 
+    scriptFile.flush();
+    bool write_success = scriptFile.good();
     scriptFile.close();
+
+    if (!write_success) {
+        std::lock_guard<std::mutex> lock(update_mutex);
+        update_error = "Erreur lors de l'ecriture du script";
+        LOG("[RocketMax] [Update] Failed to write update script");
+        return;
+    }
+
     LOG("[RocketMax] [Update] Created update script: " + scriptPath.string());
 
     // Launch the PowerShell script
@@ -984,6 +1094,7 @@ void RocketMax::launchUpdateScript()
         NULL, SW_SHOW);
 
     if ((intptr_t)result <= 32) {
+        std::lock_guard<std::mutex> lock(update_mutex);
         update_error = "Impossible de lancer le script (erreur " + std::to_string((intptr_t)result) + ")";
         LOG("[RocketMax] [Update] Failed to launch script: " + std::to_string((intptr_t)result));
         return;
@@ -993,7 +1104,7 @@ void RocketMax::launchUpdateScript()
     update_available.store(false);
 
     gameWrapper->Execute([this](GameWrapper* gw) {
-        gw->Toast("RocketMax Update", "Script de mise a jour lance!", "default", 5.0f);
+        gw->Toast("RocketMax Update", "Script de mise a jour lance!", "default", TOAST_DURATION_DEFAULT);
     });
 }
 
@@ -1170,22 +1281,22 @@ void RocketMax::setProfileVisibility(bool hidden)
 
             gameWrapper->Execute([this, hidden](GameWrapper* gw) {
                 if (hidden) {
-                    gw->Toast("RocketMax", "Profil masque ! Utilisez le lien prive pour y acceder.", "default", 5.0f);
+                    gw->Toast("RocketMax", "Profil masque ! Utilisez le lien prive pour y acceder.", "default", TOAST_DURATION_DEFAULT);
                 } else {
-                    gw->Toast("RocketMax", "Profil rendu public.", "default", 5.0f);
+                    gw->Toast("RocketMax", "Profil rendu public.", "default", TOAST_DURATION_DEFAULT);
                 }
             });
         }
         else if (code == 401) {
             LOG("[RocketMax] [Privacy] Authentication failed");
             gameWrapper->Execute([this](GameWrapper* gw) {
-                gw->Toast("RocketMax", "Erreur d'authentification. Essayez de recharger le plugin.", "default", 5.0f);
+                gw->Toast("RocketMax", "Erreur d'authentification. Essayez de recharger le plugin.", "default", TOAST_DURATION_DEFAULT);
             });
         }
         else {
             LOG("[RocketMax] [Privacy] setVisibility failed with code: " + std::to_string(code));
             gameWrapper->Execute([this](GameWrapper* gw) {
-                gw->Toast("RocketMax", "Erreur lors du changement de visibilite.", "default", 5.0f);
+                gw->Toast("RocketMax", "Erreur lors du changement de visibilite.", "default", TOAST_DURATION_DEFAULT);
             });
         }
     });
@@ -1208,13 +1319,13 @@ void RocketMax::regenerateAccessToken()
             }
 
             gameWrapper->Execute([this](GameWrapper* gw) {
-                gw->Toast("RocketMax", "Nouveau lien prive genere ! L'ancien lien ne fonctionne plus.", "default", 5.0f);
+                gw->Toast("RocketMax", "Nouveau lien prive genere ! L'ancien lien ne fonctionne plus.", "default", TOAST_DURATION_DEFAULT);
             });
         }
         else {
             LOG("[RocketMax] [Privacy] regenerateAccessToken failed with code: " + std::to_string(code));
             gameWrapper->Execute([this](GameWrapper* gw) {
-                gw->Toast("RocketMax", "Erreur lors de la regeneration du lien.", "default", 5.0f);
+                gw->Toast("RocketMax", "Erreur lors de la regeneration du lien.", "default", TOAST_DURATION_DEFAULT);
             });
         }
     });
@@ -1241,7 +1352,7 @@ void RocketMax::copyProfileLinkToClipboard()
         LOG("[RocketMax] [Privacy] Copied profile URL to clipboard: " + url);
 
         gameWrapper->Execute([this](GameWrapper* gw) {
-            gw->Toast("RocketMax", "Lien copie dans le presse-papiers !", "default", 3.0f);
+            gw->Toast("RocketMax", "Lien copie dans le presse-papiers !", "default", TOAST_DURATION_SHORT);
         });
     }
 }

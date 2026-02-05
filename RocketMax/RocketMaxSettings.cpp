@@ -148,10 +148,14 @@ void RocketMax::RenderSettings() {
     if (update_checking.load()) {
         ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.0f, 1.0f), "Verification en cours...");
     }
-    else if (update_ready.load()) {
-        ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), "Mise a jour en cours !");
-        ImGui::TextUnformatted("Le script de mise a jour a ete lance.");
-        ImGui::TextUnformatted("Redemarrez Rocket League une fois termine.");
+    else if (update_downloading.load()) {
+        ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.0f, 1.0f), "Telechargement en cours...");
+        ImGui::TextUnformatted(("Nouvelle version: " + display_version).c_str());
+    }
+    else if (update_staged.load()) {
+        ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), "Mise a jour prete !");
+        ImGui::TextUnformatted("La mise a jour sera appliquee au");
+        ImGui::TextUnformatted("prochain demarrage de Rocket League.");
         ImGui::Spacing();
         ImGui::TextUnformatted(("Nouvelle version: " + display_version).c_str());
     }
@@ -161,11 +165,11 @@ void RocketMax::RenderSettings() {
         ImGui::TextUnformatted(("Nouvelle version: " + display_version).c_str());
         ImGui::Spacing();
 
-        if (ImGui::Button("Installer la mise a jour")) {
-            launchUpdateScript();
+        if (ImGui::Button("Telecharger la mise a jour")) {
+            downloadUpdate();
         }
         ImGui::SameLine();
-        ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "(lance un script PowerShell)");
+        ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "(automatique au redemarrage)");
     }
     else {
         ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), "Vous avez la derniere version");

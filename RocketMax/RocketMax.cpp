@@ -101,7 +101,10 @@ void RocketMax::onLoad()
     // Process any offline queue from previous sessions
     processOfflineQueue();
 
-    // Check for updates if enabled
+    // Check for staged update from previous session
+    checkForStagedUpdate();
+
+    // Check for new updates if enabled
     if (*cvar_enable_auto_update) {
         checkForUpdates();
     }
@@ -770,9 +773,14 @@ std::filesystem::path RocketMax::getPluginsFolder()
     return bakkesmodFolder / "plugins";
 }
 
-std::filesystem::path RocketMax::getUpdateScriptPath()
+std::filesystem::path RocketMax::getStagedUpdatePath()
 {
-    return gameWrapper->GetDataFolder() / "rocketmax_update.ps1";
+    return getPluginsFolder() / "RocketMax_update.dll";
+}
+
+std::filesystem::path RocketMax::getBackgroundUpdaterPath()
+{
+    return gameWrapper->GetDataFolder() / "rocketmax_updater.ps1";
 }
 
 // Helper function to escape curly braces for logging (std::format uses {} as placeholders)
@@ -970,8 +978,56 @@ void RocketMax::checkForUpdates()
     });
 }
 
-void RocketMax::launchUpdateScript()
+void RocketMax::checkForStagedUpdate()
 {
+    // Called at plugin startup to apply any pending update
+    std::filesystem::path stagedPath = getStagedUpdatePath();
+    std::filesystem::path pluginPath = getPluginsFolder() / "RocketMax.dll";
+    std::filesystem::path backupPath = getPluginsFolder() / "RocketMax_backup.dll";
+
+    LOG("[RocketMax] [Update] Checking for staged update at: " + stagedPath.string());
+
+    if (!std::filesystem::exists(stagedPath)) {
+        LOG("[RocketMax] [Update] No staged update found");
+        return;
+    }
+
+    // Verify the staged file is valid (at least 100KB)
+    auto fileSize = std::filesystem::file_size(stagedPath);
+    if (fileSize < MIN_DLL_SIZE_BYTES) {
+        LOG("[RocketMax] [Update] Staged update file is too small (" + std::to_string(fileSize) + " bytes), removing");
+        std::filesystem::remove(stagedPath);
+        return;
+    }
+
+    LOG("[RocketMax] [Update] Found valid staged update (" + std::to_string(fileSize) + " bytes)");
+
+    // The staged update is ready - it will be applied by the background updater script
+    // when the game closes. Check if the background script is still running.
+    std::filesystem::path updaterPath = getBackgroundUpdaterPath();
+    if (std::filesystem::exists(updaterPath)) {
+        // Background updater script exists, update should be applied at game close
+        update_staged.store(true);
+        LOG("[RocketMax] [Update] Staged update ready, will be applied when game closes");
+
+        gameWrapper->Execute([this](GameWrapper* gw) {
+            gw->Toast("RocketMax", "Mise a jour prete ! Elle sera appliquee a la fermeture du jeu.", "default", TOAST_DURATION_LONG);
+        });
+    }
+    else {
+        // No background script - might be leftover from failed update, clean up
+        LOG("[RocketMax] [Update] No background updater found, cleaning up staged file");
+        std::filesystem::remove(stagedPath);
+    }
+}
+
+void RocketMax::downloadUpdate()
+{
+    if (update_downloading.load()) {
+        LOG("[RocketMax] [Update] Already downloading...");
+        return;
+    }
+
     // Thread-safe access to shared strings
     std::string downloadUrl;
     std::string version;
@@ -988,164 +1044,204 @@ void RocketMax::launchUpdateScript()
         return;
     }
 
+    update_downloading.store(true);
     {
         std::lock_guard<std::mutex> lock(update_mutex);
         update_error = "";
     }
-    LOG("[RocketMax] [Update] Creating update script...");
 
-    // Get paths
+    LOG("[RocketMax] [Update] Starting download from: " + downloadUrl);
+
+    // Download the DLL to a staging location
+    std::filesystem::path stagedPath = getStagedUpdatePath();
+
+    CurlRequest req;
+    req.url = downloadUrl;
+    req.verb = "GET";
+
+    HttpWrapper::SendCurlRequest(req, [this, stagedPath, version](int code, std::string result)
+    {
+        update_downloading.store(false);
+
+        if (code != 200) {
+            LOG("[RocketMax] [Update] Download failed. HTTP code: " + std::to_string(code));
+            std::lock_guard<std::mutex> lock(update_mutex);
+            update_error = "Echec du telechargement (code " + std::to_string(code) + ")";
+            return;
+        }
+
+        // Check if the downloaded content is valid (at least 100KB for a DLL)
+        if (result.size() < MIN_DLL_SIZE_BYTES) {
+            LOG("[RocketMax] [Update] Downloaded file too small: " + std::to_string(result.size()) + " bytes");
+            std::lock_guard<std::mutex> lock(update_mutex);
+            update_error = "Fichier telecharge invalide (trop petit)";
+            return;
+        }
+
+        LOG("[RocketMax] [Update] Downloaded " + std::to_string(result.size()) + " bytes");
+
+        // Write the DLL to the staging location
+        std::ofstream outFile(stagedPath, std::ios::binary);
+        if (!outFile.is_open()) {
+            LOG("[RocketMax] [Update] Could not create staged file: " + stagedPath.string());
+            std::lock_guard<std::mutex> lock(update_mutex);
+            update_error = "Impossible de creer le fichier";
+            return;
+        }
+
+        outFile.write(result.data(), result.size());
+        outFile.flush();
+        bool write_success = outFile.good();
+        outFile.close();
+
+        if (!write_success) {
+            LOG("[RocketMax] [Update] Failed to write staged file");
+            std::lock_guard<std::mutex> lock(update_mutex);
+            update_error = "Erreur d'ecriture du fichier";
+            return;
+        }
+
+        LOG("[RocketMax] [Update] Staged update saved to: " + stagedPath.string());
+
+        // Now launch the background updater
+        gameWrapper->Execute([this, version](GameWrapper* gw) {
+            launchBackgroundUpdater();
+
+            if (*cvar_enable_toasts) {
+                gw->Toast("RocketMax", "Mise a jour v" + version + " telechargee ! Redemarrez le jeu pour l'appliquer.", "default", TOAST_DURATION_LONG);
+            }
+        });
+    });
+}
+
+void RocketMax::launchBackgroundUpdater()
+{
+    // Create a hidden PowerShell script that:
+    // 1. Waits in background for Rocket League to close
+    // 2. Replaces the old DLL with the new one
+    // 3. Cleans up the staged file and itself
+
+    std::filesystem::path scriptPath = getBackgroundUpdaterPath();
     std::filesystem::path pluginsFolder = getPluginsFolder();
     std::filesystem::path pluginPath = pluginsFolder / "RocketMax.dll";
-    std::filesystem::path scriptPath = getUpdateScriptPath();
+    std::filesystem::path stagedPath = getStagedUpdatePath();
+    std::filesystem::path backupPath = pluginsFolder / "RocketMax_backup.dll";
 
-    // Create PowerShell script that will:
-    // 1. Download the DLL from GitHub
-    // 2. Verify the download (check file size > 100KB for a valid DLL)
-    // 3. Replace the old plugin
-    // 4. Clean up
     std::ofstream scriptFile(scriptPath);
     if (!scriptFile.is_open()) {
+        LOG("[RocketMax] [Update] Could not create background updater script");
         std::lock_guard<std::mutex> lock(update_mutex);
-        update_error = "Impossible de creer le script";
-        LOG("[RocketMax] [Update] Could not create update script: " + scriptPath.string());
+        update_error = "Impossible de creer le script de mise a jour";
         return;
     }
 
-    scriptFile << "# RocketMax Auto-Update Script\n";
-    scriptFile << "# Generated by RocketMax Plugin v" << plugin_version << "\n";
-    scriptFile << "$ErrorActionPreference = 'Stop'\n";
-    scriptFile << "$Host.UI.RawUI.WindowTitle = 'RocketMax Update'\n\n";
+    // Write the PowerShell script
+    scriptFile << "# RocketMax Background Updater\n";
+    scriptFile << "# This script runs hidden and waits for Rocket League to close\n";
+    scriptFile << "# Generated by RocketMax Plugin v" << plugin_version << "\n\n";
 
-    scriptFile << "$downloadUrl = '" << downloadUrl << "'\n";
+    scriptFile << "$ErrorActionPreference = 'Stop'\n\n";
+
+    scriptFile << "$stagedPath = '" << stagedPath.string() << "'\n";
     scriptFile << "$pluginPath = '" << pluginPath.string() << "'\n";
-    scriptFile << "$tempPath = '" << (pluginsFolder / ("RocketMax_" + version + ".dll")).string() << "'\n";
-    scriptFile << "$backupPath = '" << (pluginsFolder / "RocketMax_backup.dll").string() << "'\n";
-    scriptFile << "$updateSuccess = $false\n\n";
+    scriptFile << "$backupPath = '" << backupPath.string() << "'\n";
+    scriptFile << "$scriptPath = '" << scriptPath.string() << "'\n";
+    scriptFile << "$logPath = '" << (gameWrapper->GetDataFolder() / "rocketmax_update.log").string() << "'\n\n";
 
-    scriptFile << "Write-Host ''\n";
-    scriptFile << "Write-Host '========================================' -ForegroundColor Cyan\n";
-    scriptFile << "Write-Host '       RocketMax Auto-Update Script' -ForegroundColor Cyan\n";
-    scriptFile << "Write-Host '========================================' -ForegroundColor Cyan\n";
-    scriptFile << "Write-Host ''\n";
-    scriptFile << "Write-Host 'IMPORTANT: Fermez Rocket League avant de continuer!' -ForegroundColor Yellow\n";
-    scriptFile << "Write-Host '           Le plugin ne peut pas etre mis a jour' -ForegroundColor Yellow\n";
-    scriptFile << "Write-Host '           pendant que le jeu est en cours.' -ForegroundColor Yellow\n";
-    scriptFile << "Write-Host ''\n";
-    scriptFile << "Write-Host 'Appuyez sur Entree quand Rocket League est ferme...' -ForegroundColor White\n";
-    scriptFile << "Read-Host\n\n";
-
-    scriptFile << "try {\n";
-    scriptFile << "    # Check if Rocket League is running\n";
+    // Wait for Rocket League to close
+    scriptFile << "# Wait for Rocket League to close (check every 5 seconds)\n";
+    scriptFile << "while ($true) {\n";
+    scriptFile << "    Start-Sleep -Seconds 5\n";
     scriptFile << "    $rlProcess = Get-Process -Name 'RocketLeague' -ErrorAction SilentlyContinue\n";
-    scriptFile << "    if ($rlProcess) {\n";
-    scriptFile << "        Write-Host ''\n";
-    scriptFile << "        Write-Host 'ERREUR: Rocket League est toujours en cours!' -ForegroundColor Red\n";
-    scriptFile << "        Write-Host 'Fermez le jeu et relancez ce script.' -ForegroundColor Red\n";
-    scriptFile << "        throw 'Rocket League is still running'\n";
-    scriptFile << "    }\n\n";
-
-    scriptFile << "    # Remove temp file if it exists from a previous attempt\n";
-    scriptFile << "    if (Test-Path $tempPath) { Remove-Item $tempPath -Force }\n\n";
-
-    scriptFile << "    Write-Host 'Telechargement de la nouvelle version...' -ForegroundColor Yellow\n";
-    scriptFile << "    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12\n";
-    scriptFile << "    $ProgressPreference = 'SilentlyContinue'\n";
-    scriptFile << "    Invoke-WebRequest -Uri $downloadUrl -OutFile $tempPath -UseBasicParsing\n";
-    scriptFile << "    $ProgressPreference = 'Continue'\n\n";
-
-    scriptFile << "    # Verify download - DLL should be at least 100KB\n";
-    scriptFile << "    $fileSize = (Get-Item $tempPath).Length\n";
-    scriptFile << "    if ($fileSize -lt 102400) {\n";
-    scriptFile << "        throw \"Le fichier telecharge est trop petit ($fileSize octets). Telechargement corrompu.\"\n";
+    scriptFile << "    if (-not $rlProcess) {\n";
+    scriptFile << "        # Game is closed, wait a bit more to ensure files are released\n";
+    scriptFile << "        Start-Sleep -Seconds 3\n";
+    scriptFile << "        break\n";
     scriptFile << "    }\n";
-    scriptFile << "    Write-Host \"Telecharge avec succes ($fileSize octets)\" -ForegroundColor Green\n\n";
+    scriptFile << "}\n\n";
+
+    // Perform the update
+    scriptFile << "try {\n";
+    scriptFile << "    # Verify staged file still exists\n";
+    scriptFile << "    if (-not (Test-Path $stagedPath)) {\n";
+    scriptFile << "        Add-Content $logPath \"$(Get-Date): Staged file not found, aborting\"\n";
+    scriptFile << "        exit 1\n";
+    scriptFile << "    }\n\n";
 
     scriptFile << "    # Backup current version\n";
     scriptFile << "    if (Test-Path $pluginPath) {\n";
-    scriptFile << "        Write-Host 'Sauvegarde de la version actuelle...' -ForegroundColor Yellow\n";
-    scriptFile << "        Copy-Item $pluginPath $backupPath -Force -ErrorAction Stop\n";
+    scriptFile << "        Copy-Item $pluginPath $backupPath -Force\n";
+    scriptFile << "        Add-Content $logPath \"$(Get-Date): Backed up current version\"\n";
     scriptFile << "    }\n\n";
 
-    scriptFile << "    # Replace plugin\n";
-    scriptFile << "    Write-Host 'Installation de la nouvelle version...' -ForegroundColor Yellow\n";
-    scriptFile << "    Move-Item $tempPath $pluginPath -Force -ErrorAction Stop\n\n";
+    scriptFile << "    # Replace the plugin\n";
+    scriptFile << "    Move-Item $stagedPath $pluginPath -Force\n";
+    scriptFile << "    Add-Content $logPath \"$(Get-Date): Successfully installed update\"\n\n";
 
-    scriptFile << "    $updateSuccess = $true\n";
-    scriptFile << "    Write-Host ''\n";
-    scriptFile << "    Write-Host '========================================' -ForegroundColor Green\n";
-    scriptFile << "    Write-Host '       Mise a jour terminee!' -ForegroundColor Green\n";
-    scriptFile << "    Write-Host '========================================' -ForegroundColor Green\n";
-    scriptFile << "    Write-Host ''\n";
-    scriptFile << "    Write-Host 'Vous pouvez maintenant relancer Rocket League.' -ForegroundColor Cyan\n";
-    scriptFile << "    Write-Host ''\n";
-
-    scriptFile << "    # Clean up backup on success\n";
-    scriptFile << "    if (Test-Path $backupPath) { Remove-Item $backupPath -Force -ErrorAction SilentlyContinue }\n";
-    scriptFile << "}\n";
-    scriptFile << "catch {\n";
-    scriptFile << "    Write-Host ''\n";
-    scriptFile << "    Write-Host '========================================' -ForegroundColor Red\n";
-    scriptFile << "    Write-Host '       ERREUR!' -ForegroundColor Red\n";
-    scriptFile << "    Write-Host '========================================' -ForegroundColor Red\n";
-    scriptFile << "    Write-Host ''\n";
-    scriptFile << "    Write-Host \"Details: $_\" -ForegroundColor Red\n";
-    scriptFile << "    Write-Host ''\n";
-
-    scriptFile << "    # Restore backup if exists and update failed\n";
-    scriptFile << "    if ((Test-Path $backupPath) -and -not $updateSuccess) {\n";
-    scriptFile << "        Write-Host 'Restauration de la sauvegarde...' -ForegroundColor Yellow\n";
-    scriptFile << "        try {\n";
-    scriptFile << "            Move-Item $backupPath $pluginPath -Force -ErrorAction Stop\n";
-    scriptFile << "            Write-Host 'Sauvegarde restauree.' -ForegroundColor Green\n";
-    scriptFile << "        } catch {\n";
-    scriptFile << "            Write-Host \"Echec de la restauration: $_\" -ForegroundColor Red\n";
-    scriptFile << "        }\n";
+    scriptFile << "    # Remove backup on success\n";
+    scriptFile << "    if (Test-Path $backupPath) {\n";
+    scriptFile << "        Remove-Item $backupPath -Force -ErrorAction SilentlyContinue\n";
     scriptFile << "    }\n";
 
-    scriptFile << "    # Clean up temp file\n";
-    scriptFile << "    if (Test-Path $tempPath) { Remove-Item $tempPath -Force -ErrorAction SilentlyContinue }\n";
-    scriptFile << "}\n\n";
+    scriptFile << "}\n";
+    scriptFile << "catch {\n";
+    scriptFile << "    Add-Content $logPath \"$(Get-Date): Update failed - $_\"\n\n";
 
-    scriptFile << "Write-Host ''\n";
-    scriptFile << "Write-Host 'Appuyez sur Entree pour fermer cette fenetre...' -ForegroundColor Gray\n";
-    scriptFile << "Read-Host\n";
+    scriptFile << "    # Try to restore backup\n";
+    scriptFile << "    if (Test-Path $backupPath) {\n";
+    scriptFile << "        try {\n";
+    scriptFile << "            Move-Item $backupPath $pluginPath -Force\n";
+    scriptFile << "            Add-Content $logPath \"$(Get-Date): Restored backup\"\n";
+    scriptFile << "        } catch {\n";
+    scriptFile << "            Add-Content $logPath \"$(Get-Date): Failed to restore backup - $_\"\n";
+    scriptFile << "        }\n";
+    scriptFile << "    }\n";
+    scriptFile << "}\n";
+    scriptFile << "finally {\n";
+    scriptFile << "    # Clean up the script itself\n";
+    scriptFile << "    Remove-Item $scriptPath -Force -ErrorAction SilentlyContinue\n";
+    scriptFile << "}\n";
 
     scriptFile.flush();
     bool write_success = scriptFile.good();
     scriptFile.close();
 
     if (!write_success) {
+        LOG("[RocketMax] [Update] Failed to write background updater script");
         std::lock_guard<std::mutex> lock(update_mutex);
-        update_error = "Erreur lors de l'ecriture du script";
-        LOG("[RocketMax] [Update] Failed to write update script");
+        update_error = "Erreur d'ecriture du script";
         return;
     }
 
-    LOG("[RocketMax] [Update] Created update script: " + scriptPath.string());
+    LOG("[RocketMax] [Update] Created background updater: " + scriptPath.string());
 
-    // Launch the PowerShell script with -NoExit to keep window open on any error
-    std::string psArgs = "-NoExit -ExecutionPolicy Bypass -File \"" + scriptPath.string() + "\"";
-    LOG("[RocketMax] [Update] Launching PowerShell with args: " + psArgs);
+    // Launch the script hidden (no window)
+    std::string psArgs = "-WindowStyle Hidden -ExecutionPolicy Bypass -File \"" + scriptPath.string() + "\"";
 
-    // Use ShellExecute to run the script (shows a window so user can see progress)
-    HINSTANCE result = ShellExecuteA(NULL, "open", "powershell.exe",
-        psArgs.c_str(),
-        NULL, SW_SHOW);
+    STARTUPINFOA si = { sizeof(si) };
+    si.dwFlags = STARTF_USESHOWWINDOW;
+    si.wShowWindow = SW_HIDE;
 
-    if ((intptr_t)result <= 32) {
-        std::lock_guard<std::mutex> lock(update_mutex);
-        update_error = "Impossible de lancer le script (erreur " + std::to_string((intptr_t)result) + ")";
-        LOG("[RocketMax] [Update] Failed to launch script: " + std::to_string((intptr_t)result));
-        return;
+    PROCESS_INFORMATION pi;
+    std::string cmd = "powershell.exe " + psArgs;
+
+    if (CreateProcessA(NULL, const_cast<char*>(cmd.c_str()), NULL, NULL, FALSE,
+        CREATE_NO_WINDOW | DETACHED_PROCESS, NULL, NULL, &si, &pi)) {
+        CloseHandle(pi.hProcess);
+        CloseHandle(pi.hThread);
+        LOG("[RocketMax] [Update] Background updater launched successfully");
+
+        update_staged.store(true);
+        update_available.store(false);
     }
+    else {
+        LOG("[RocketMax] [Update] Failed to launch background updater");
+        std::lock_guard<std::mutex> lock(update_mutex);
+        update_error = "Impossible de lancer le script de mise a jour";
 
-    update_ready.store(true);
-    update_available.store(false);
-
-    gameWrapper->Execute([this](GameWrapper* gw) {
-        gw->Toast("RocketMax Update", "Fermez Rocket League puis suivez les instructions!", "default", TOAST_DURATION_LONG);
-    });
+        // Clean up the script
+        std::filesystem::remove(scriptPath);
+    }
 }
 
 // ============ AUTHENTICATION & PRIVACY ============

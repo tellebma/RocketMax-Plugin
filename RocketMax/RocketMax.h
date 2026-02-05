@@ -70,11 +70,14 @@ class RocketMax: public BakkesMod::Plugin::BakkesModPlugin
 
 	// Auto-update
 	void checkForUpdates();
-	void launchUpdateScript();
+	void downloadUpdate();
+	void checkForStagedUpdate();
+	void launchBackgroundUpdater();
 	bool parseVersionString(const std::string& version, int& major, int& minor, int& patch);
 	bool isNewerVersion(const std::string& remoteVersion);
 	std::filesystem::path getPluginsFolder();
-	std::filesystem::path getUpdateScriptPath();
+	std::filesystem::path getStagedUpdatePath();
+	std::filesystem::path getBackgroundUpdaterPath();
 	std::string extractJsonValue(const std::string& json, const std::string& key);
 
 	// Authentication & Privacy
@@ -141,7 +144,8 @@ class RocketMax: public BakkesMod::Plugin::BakkesModPlugin
 	// Auto-update state (atomic for thread safety with async callbacks)
 	std::atomic<bool> update_available{false};
 	std::atomic<bool> update_checking{false};
-	std::atomic<bool> update_ready{false};
+	std::atomic<bool> update_downloading{false};
+	std::atomic<bool> update_staged{false};  // Update downloaded and waiting for game restart
 
 	// Thread-safe strings for update info (protected by update_mutex)
 	mutable std::mutex update_mutex;
